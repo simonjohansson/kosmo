@@ -51,3 +51,14 @@ description = "Build the browser emulator (web/emu/build.sh; needs a prior build
 # Task-scoped: emsdk's install dir has a `docker` folder that would shadow the docker CLI on PATH.
 tools = { "asdf:mise-plugins/mise-emsdk" = "4.0.10" }
 run = "sh web/emu/build.sh"
+
+[tasks.emu-check]
+description = "Headless emulator run: visit every page, turn knobs, play a note, compare LCD snapshots with tests/emu_ref (--update rewrites)"
+run = "python tools/emu_check.py"
+
+[tasks.stress]
+description = "fm1-emulator tests/stress.py against build/kosmo.bin with a fixed seed"
+run = '''
+EMU_DIR="$(dirname "${FM1_EMULATOR:-$HOME/src/fm1-emulator/emulator}")"
+python "$EMU_DIR/tests/stress.py" build/kosmo.bin --seed 1 --output "$(mktemp -d)/stress"
+'''
