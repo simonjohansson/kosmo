@@ -88,6 +88,7 @@ typedef struct track {
     /* mono */
     uint8_t mono_stack[8];
     uint8_t nmono;
+    uint8_t fat_seen;            /* P_E4 the held notes' copies were last matched to (#22) */
     uint8_t mono_note;           /* note the MONO / LEGATO / UNISON voice(s) play, 0 = none */
     uint8_t rr;                  /* POLY ROTATE: next voice to try */
     uint8_t rsv_sz[15];          /* (sizeof(track_t) a multiple of 16: below) */

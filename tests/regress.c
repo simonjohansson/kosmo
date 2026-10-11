@@ -617,6 +617,45 @@ static int chk_reverb(char *msg, uint32_t n)
 
 static uint32_t mode_release_gates(void);
 /* FAT n: n extra copies per note, spread by DETUNE (none at DETUNE 0); FAT 0 is one voice */
+/* #22: FAT turned on a held note adds / releases its copies live, without a click */
+static int chk_fat_live(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t bad = 0, step, mode, want[5] = {1, 5, 1, 3, 1}, fat[5] = {0, 4, 0, 2, 0};
+    int32_t dmax[2] = {0, 0};
+    for (mode = V_POLY; mode <= V_LEGATO; mode += V_LEGATO - V_POLY) {
+        host_tracks_init();
+        t->p[P_VOICE] = (int16_t)mode;
+        t->p[P_DETUNE] = 60;
+        trk_note_on(t, 60, 100);
+        run_to(fpos + FS / 4u);
+        for (step = 0; step < 5u; step++) {
+            uint32_t k, c = 0;
+            int32_t prev = last_out[2u * CTL - 2u];
+            t->p[P_E4] = (int16_t)fat[step];
+            for (k = 0; k < 20u; k++) {                 /* 20 blocks: past the fade-in and the release */
+                uint32_t j;
+                blk();
+                for (j = 0; j < CTL; j++) {
+                    int32_t d = last_out[2u * j] - prev;
+                    prev = last_out[2u * j];
+                    d = d < 0 ? -d : d;
+                    dmax[mode != V_POLY] = d > dmax[mode != V_POLY] ? d : dmax[mode != V_POLY];
+                }
+            }
+            c = mode_release_gates();
+            bad += c != want[step] || voices_busy() < want[step];
+        }
+        trk_note_off(t, 60);
+        bad += mode_release_gates() != 0;
+        run_to(fpos + 2u * FS);
+        bad += voices_busy() != 0;
+    }
+    bad += dmax[0] > 6000 || dmax[1] > 6000;            /* a click is a jump of a large part of full scale */
+    snprintf(msg, n, "FAT live on a held note: 1 > 5 > 1 > 3 > 1 voices, no click (POLY %d, LEGATO %d, %u wrong)", dmax[0], dmax[1], bad);
+    return !bad;
+}
+
 static int chk_fat(char *msg, uint32_t n)
 {
     track_t *t = &trk[0];
@@ -988,6 +1027,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
     add(J_CHECK, "wave: FAT copies and DETUNE")->check = chk_fat;
+    add(J_CHECK, "wave: FAT live on held notes")->check = chk_fat_live;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     run_jobs(J, nj, jobs_at_once);
 

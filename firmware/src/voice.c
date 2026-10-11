@@ -292,6 +292,7 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
     uint32_t mode = trk_vmode(t);
     if (t->p[P_MUTE])
         return;
+    t->fat_seen = (uint8_t)t->p[P_E4];
     if (mode == V_POLY) {
         voice_t *v = voice_alloc(t, note);
         t->nmono = 0;                                   /* no stale mono stack after a mode change */
@@ -419,6 +420,86 @@ static int32_t env_tick(track_t *t, voice_t *v)
 /* Channel bend is live performance state, outside presets. Q8 semitones. */
 static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
 
+/* FAT is live: each control block, bring every held note's copies in line with the current P_E4 (#22).
+ * Copies sit in slots c = 1..4 (the same fk as in trk_note_on); a missing one starts in a free or released
+ * voice (never a held one), an extra one is released. The levels follow the new count. MONO / LEGATO /
+ * UNISON restart through mono_play, which also keeps their fk spread. */
+__attribute__((noinline)) static void fat_sync(track_t *t)
+{
+    uint32_t mode = trk_vmode(t), nv = trk_copies(t), i, c, j;
+    t->fat_seen = (uint8_t)t->p[P_E4];
+    if (mode != V_POLY) {
+        uint32_t g = 0, bad = 0, orig, lead = t->v[0].vel;
+        if (!t->mono_note || !t->v[0].active || !t->v[0].gate)
+            return;
+        for (i = 0; i < NVOICE; i++) {
+            int on = t->v[i].active && t->v[i].gate;
+            g += on;
+            bad += i < nv ? !on : on;
+        }
+        if (!bad)
+            return;
+        orig = g >= NVOICE ? lead * 100u / 36u : g > 1u ? lead * 2u : lead;
+        for (i = nv; i < NVOICE; i++)
+            if (t->v[i].gate) {
+                t->v[i].gate = 0;
+                t->v[i].stage = 3;
+            }
+        mono_play(t, t->mono_note, orig, 0, t->p[P_GLIDE] != 0);
+        for (i = 0; i < nv; i++)
+            if (t->v[i].active && t->v[i].gate)
+                t->v[i].vel = (uint8_t)(nv >= NVOICE ? orig * 36u / 100u : nv > 1u ? orig / 2u : orig);
+        return;
+    }
+    for (i = 0; i < NVOICE; i++) {
+        voice_t *v = &t->v[i], *cp[5] = {0};
+        uint32_t want = nv - 1u, g = 1, g2 = 1, orig;
+        if (!v->active || !v->gate || v->stage == 4u || v->fk)
+            continue;
+        for (j = 0; j < NVOICE; j++) {
+            voice_t *w = &t->v[j];
+            for (c = 1; c <= 4u; c++)
+                if (w->active && w->gate && w->stage != 4u && w->note == v->note && w->fk == (int32_t)((c + 1u) / 2u) * 3 * (c & 1u ? 1 : -1))
+                    cp[c] = w;
+        }
+        for (c = 1; c <= 4u; c++)
+            g += cp[c] != 0;
+        orig = g > 1u ? v->vel * (g + 1u) / 2u : v->vel;
+        for (c = 1; c <= 4u; c++) {
+            voice_t *x = 0;
+            if (cp[c] && c > want) {
+                cp[c]->gate = 0;
+                cp[c]->stage = 3;
+                cp[c] = 0;
+            } else if (!cp[c] && c <= want) {
+                static uint32_t seed = 0x3456789u;
+                for (j = 0; j < NVOICE && !x; j++)
+                    x = !t->v[j].active ? &t->v[j] : 0;
+                if (x ? !voice_room(t, 1) : 0)
+                    break;
+                for (j = 0; j < NVOICE && !x; j++)      /* else the oldest released voice */
+                    if (t->v[j].active && !t->v[j].gate && t->v[j].stage != 4u && (!x || t->v[j].age < x->age))
+                        x = &t->v[j];
+                if (!x)
+                    break;
+                x->fk = (int32_t)((c + 1u) / 2u) * 3 * (c & 1u ? 1 : -1);
+                voice_start(t, x, v->note, orig * 2u / (want + 1u), 0);
+                seed = seed * 1664525u + 1013904223u;
+                x->ph[0] += seed;
+                cp[c] = x;
+            }
+        }
+        for (c = 1; c <= 4u; c++)
+            g2 += cp[c] != 0;
+        if (g2 != g) {
+            v->vel = (uint8_t)(g2 > 1u ? orig * 2u / (g2 + 1u) : orig);
+            for (c = 1; c <= 4u; c++)
+                if (cp[c])
+                    cp[c]->vel = v->vel;
+        }
+    }
+}
+
 /* render one block of the part into out (cleared here); returns the voices rendered */
 static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
@@ -437,6 +518,8 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     bend = midi_bend_q8[0];
     bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
     bend_fine = (bend - bend16 * 16) * 2367 / 2560;
+    if (t->fat_seen != t->p[P_E4])                      /* only a change: voices shed by the budget stay shed */
+        fat_sync(t);
     for (i = 0; i < n; i++)
         out[i] = 0;
     for (i = 0; i < NVOICE; i++) {
