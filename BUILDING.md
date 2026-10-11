@@ -4,9 +4,9 @@ The build makes three files in `build/`:
 
 | File | What |
 | --- | --- |
-| `felucca.bin` | the firmware app |
+| `kosmo.bin` | the firmware app |
 | `loader/ota.bin` | the update loader |
-| `felucca.fwsc` | the installable package (app + loader) |
+| `kosmo.fwsc` | the installable package (app + loader) |
 
 ## Prerequisites
 
@@ -113,7 +113,7 @@ Use the web installer in Chrome or Edge:
 From the command line (needs `pip3 install mido python-rtmidi`):
 
 ```
-python3 tools/fm1_install.py build/felucca.fwsc
+python3 tools/fm1_install.py build/kosmo.fwsc
 python3 tools/fm1_install.py --info          # identity of the connected FM-1
 ```
 
@@ -121,7 +121,7 @@ Or, to install your own build from the web installer, make a local copy of the s
 (Web MIDI needs a secure context):
 
 ```
-python3 web/make_site.py build/felucca.fwsc dev /tmp/felucca-site
+python3 web/make_site.py build/kosmo.fwsc dev /tmp/felucca-site
 cd /tmp/felucca-site && python3 -m http.server 8000
 # open http://localhost:8000/webapp/installer/
 ```

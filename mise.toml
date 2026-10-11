@@ -38,7 +38,9 @@ docker info >/dev/null 2>&1 || { echo "build:docker: Docker is not running; star
 [tasks.test]
 description = "Host tests (needs a prior build)"
 depends = ["setup"]
-run = "tests/run_tests.sh"
+# emsdk for the browser-emulator tests; its own clang shadows ours on PATH, so pin CC by path.
+tools = { "asdf:mise-plugins/mise-emsdk" = "4.0.10" }
+run = 'CC="$(mise which clang)" tests/run_tests.sh'
 
 [tasks.smoke]
 description = "Boot build/kosmo.bin in fm1-emulator (set FM1_EMULATOR)"
