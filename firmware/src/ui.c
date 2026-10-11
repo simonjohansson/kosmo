@@ -22,7 +22,8 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
     {B_FX, "SPACE", RGB(130, 175, 255), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
 };
 static const char *const FT_NAME[4] = {"LP", "BP", "HP", "NOTCH"};
-static uint8_t ui_page;
+static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
+static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
 static int16_t ui_sig[8] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
 static uint32_t ui_last, ui_ring;           /* last redraw (ms), ring animation step */
 static int8_t ui_led = -1;
@@ -167,6 +168,18 @@ static void pic_space(void)
     disc(cx, cy, 6, 0, RGB(235, 60, 130));
 }
 
+static void banner(void)
+{
+    const char *n = PRESETS[ui_preset].name;
+    char s[8] = "1 / 8";
+    int32_t w = text_w(&AF_L, n) + 24, x = (240 - w) / 2;
+    s[0] = (char)('1' + ui_preset);
+    cv_rrect(x, 78, w, 74, 12, INK, ux_mix(PG[ui_page].bg, WHITE, 75));
+    cv_rrect(x + 3, 81, w - 6, 68, 10, WHITE, INK);
+    cv_text(x + 12, 90, &AF_L, n, INK);
+    cv_text(120 - text_w(&AF_M, s) / 2, 124, &AF_M, s, INK);
+}
+
 /* ---------------------------------------------------------- page --- */
 static void scene(void)
 {
@@ -192,6 +205,8 @@ static void scene(void)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, WHITE, track);
         cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, INK);
     }
+    if (ui_banner)
+        banner();
 }
 
 static void ui_draw(void)
@@ -225,6 +240,7 @@ static void ui_input(void)
     uint32_t pressed = fm1_input_edges(0), i, active = 0;
     uint32_t dn = 1u << panel.btn[B_OCTDN], up = 1u << panel.btn[B_OCTUP];
     int16_t sig[8] = {0};
+    int32_t pst;
     if ((pressed & (dn | up)) && (fm1_in.buttons & (dn | up)) == (dn | up))
         song.octave = 0;
     else if ((pressed & dn) && song.octave > -3)
@@ -234,6 +250,14 @@ static void ui_input(void)
     for (i = 0; i < 4u; i++)
         if (pressed & (1u << panel.btn[PG[i].btn]))
             ui_page = (uint8_t)i;
+    pst = panel_enc(EN_PRESET);
+    if (pst) {                                  /* PRESETS: step with wrap-around, show the name for 1.5 s */
+        ui_preset = (uint8_t)((ui_preset + pst % (int32_t)NPRESETS + (int32_t)NPRESETS) % (int32_t)NPRESETS);
+        preset_load(ui_preset);
+        ui_banner = fm1_ms + 1500u;
+    }
+    if (ui_banner && (int32_t)(fm1_ms - ui_banner) >= 0)
+        ui_banner = 0;
     for (i = 0; i < 4u; i++) {                  /* knobs K1..K4 (a knob the page does not use is only drained) */
         int32_t s = panel_enc(EN_K1 + i), v;
         const kn_t *k = &PG[ui_page].k[i];
@@ -258,6 +282,7 @@ static void ui_input(void)
         sig[1 + i] = PG[ui_page].k[i].v ? *PG[ui_page].k[i].v : 0;
     sig[5] = song.octave;
     sig[6] = (int16_t)ui_ring;
+    sig[7] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
     if (!memcmp(sig, ui_sig, sizeof sig) || fm1_ms - ui_last < 40u)
         return;
     memcpy(ui_sig, sig, sizeof sig);

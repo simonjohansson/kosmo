@@ -59,6 +59,7 @@
 #include "core.h"
 #include "engines.c"             /* dsp.c, eng_wave.c */
 #include "params.c"
+#include "presets.c"           /* the factory presets */
 #include "voice.c"
 #include "fx.c"
 

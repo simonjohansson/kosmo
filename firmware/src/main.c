@@ -104,6 +104,7 @@ static void kosmo_init(void)
         trk[0].p[i] = TP[i].def;
     for (i = 0; i < 8u; i++)
         trk[0].p[P_E0 + i] = ENGINE->edit[i].def;
+    preset_load(0);                           /* power on: preset 1 */
     song.master_q12 = 2048;                   /* (the pot's level replaces it before the audio starts: master_boot) */
 }
 

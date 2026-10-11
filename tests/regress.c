@@ -538,6 +538,31 @@ static int chk_reverb(char *msg, uint32_t n)
     return early > LIM_TAIL && R.tail_peak <= LIM_TAIL && !R.over;
 }
 
+/* every factory preset loads, plays (not silent) and renders differently from all the others */
+static int chk_presets(char *msg, uint32_t n)
+{
+    uint64_t h[64];
+    uint32_t i, j, silent = 0, same = 0;
+    track_t *t = &trk[0];
+    for (i = 0; i < NPRESETS; i++) {
+        host_tracks_init();
+        preset_load(i);
+        R.hash = 0xcbf29ce484222325ull;
+        R.peak = 0;
+        trk_note_on(t, 60, 100);
+        run_to(fpos + FS / 2u);
+        trk_note_off(t, 60);
+        run_to(fpos + FS / 4u);
+        silent += R.peak < 100;
+        h[i] = R.hash;
+        for (j = 0; j < i; j++)
+            same += h[j] == h[i];
+        run_to(fpos + 2u * FS);                       /* let the voice and the tail die before the next */
+    }
+    snprintf(msg, n, "%u factory presets: %u silent, %u identical to another", NPRESETS, silent, same);
+    return NPRESETS >= 8u && !silent && !same;
+}
+
 /* Voices held before a mode change must remain reclaimable except for the lead. */
 static int chk_mode_budget(char *msg, uint32_t n)
 {
@@ -840,6 +865,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
+    add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */
