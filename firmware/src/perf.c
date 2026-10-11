@@ -61,6 +61,7 @@ static void perf_service(void)                 /* main loop */
     pf_acc_kv("t", &pf_t5); pf_acc_kv("u", &pf_t5n);
     { uint32_t k; char nm[4] = "xN";
       for (k = 0; k < 7u; k++) { nm[1] = (char)('0' + k); pf_kv(nm, pfx_s[k]); nm[2] = 'n'; pf_kv(nm, pfx_n[k]); nm[2] = 0; pfx_s[k] = pfx_n[k] = 0; } }
+    pf_kv("lw", lcd_wait_ticks); lcd_wait_ticks = 0;
     pf_kv("spi", lcd_bytes);
     pf_kv("late", felucca_dbg.late);
     pf_kv("shed", shed_count);

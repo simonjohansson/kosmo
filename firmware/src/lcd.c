@@ -21,11 +21,20 @@ static void lcd_spin(uint32_t n)
         ;
 }
 
+#if KOSMO_PERF
+static uint32_t lcd_wait_ticks;    /* KOSMO_PERF: TIMER4 ticks the CPU spent waiting for the SPI (perf.c) */
+#endif
 static void lcd_sync(void)          /* finish the running transfer (before touching its buffer) */
 {
+#if KOSMO_PERF
+    uint32_t t0 = fm1_ticks();
+#endif
     if (!lcd_busy)
         return;
     fm1_lcd_wait();
+#if KOSMO_PERF
+    lcd_wait_ticks += fm1_ticks() - t0;
+#endif
     fm1_lcd_deselect();
     lcd_busy = 0;
 }
