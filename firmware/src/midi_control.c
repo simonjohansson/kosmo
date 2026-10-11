@@ -10,6 +10,9 @@ static uint8_t midi_pedal;
 #define MSET(a, n) ((a)[(n) >> 5] |= 1u << ((n) & 31u))
 #define MCLR(a, n) ((a)[(n) >> 5] &= ~(1u << ((n) & 31u)))
 
+#if KOSMO_PERF
+static void perf_cc(uint32_t cc, uint32_t v);        /* ui.c: CC 102.. set page, wave, scan, fat, detune (host-driven bench) */
+#endif
 static int key_holds(uint32_t note);        /* input.c: a key held plays this note */
 static int midi_holds(uint32_t note) { return MBIT(midi_on, note) || MBIT(midi_sus, note); }
 
@@ -72,6 +75,11 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t d1, uint3
         midi_bend_target[0] = b * 512 / (b < 0 ? 8192 : 8191);          /* Q8 semitones, +-2 */
     }
     else if (st == 0xB0u) {
+#if KOSMO_PERF
+        if (d1 >= 102u && d1 <= 107u)
+            perf_cc(d1, d2);
+        else
+#endif
         if (d1 == 64u) {
             if (d2 >= 64u)
                 midi_pedal = 1;

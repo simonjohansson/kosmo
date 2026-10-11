@@ -189,7 +189,7 @@ def build_app():
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("KOSMO_FLASH", "KOSMO_OTA", "KOSMO_OTA_DRYRUN", "KOSMO_OTA_RAMONLY", "KOSMO_CDC",
                  "KOSMO_UART", "KOSMO_UAC", "KOSMO_UAC_TONE", "KOSMO_UAC_48K",
-                 "KOSMO_CDC_DEFAULT", "KOSMO_UAC_AS_FIRST"):
+                 "KOSMO_CDC_DEFAULT", "KOSMO_UAC_AS_FIRST", "KOSMO_PERF"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/kosmo.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")

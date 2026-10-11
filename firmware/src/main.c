@@ -46,6 +46,9 @@ void fm1_timer5_irq(void)
             uac_service();
 #endif
         t5_nested_ticks += fm1_ticks() - t0;
+#if KOSMO_PERF
+        pf_acc(&pf_t5n, fm1_ticks() - t0);
+#endif
         return;
     }
     if (owed & 1u)
@@ -55,6 +58,9 @@ void fm1_timer5_irq(void)
         uart_midi_poll();
 #endif
     owed = 0;
+#if KOSMO_PERF
+    pf_acc(&pf_t5, fm1_ticks() - t0);
+#endif
 }
 extern void isr_timer5(void);
 
@@ -222,6 +228,9 @@ static void fm1_main(void)
             fm1_enter_uboot();
         }
         ui_input();
+#if KOSMO_PERF
+        perf_service();
+#endif
         settings_poll();                              /* queued settings save */
         while (fm1_ms - m < 15u)                                 /* ~60 loops/s at most */
             ui_input();

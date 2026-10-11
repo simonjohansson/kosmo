@@ -9,6 +9,12 @@
 #define CPU_AVG (4096u / HALF_FRAMES)   /* halves the load meter averages: ~93 ms whatever the half */
 #define OUT_SHIFT 7               /* Q15 -> 24-bit, -6 dBFS ceiling (M0f ran clean at -18 dBFS) */
 
+#if KOSMO_PERF
+static void pf_half(uint32_t render_ticks, uint32_t all_ticks);
+#define PERF_HALF(r, a) pf_half((r), (a))
+#else
+#define PERF_HALF(r, a) ((void)0)
+#endif
 static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(4)));
 
 /* diagnostics, kept across resets and UBOOT entry: read with `fm1t memr` */
@@ -114,7 +120,11 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         }
         fm1_audio_ack_half();
         audio_halves++;
-        us = shed_check(fm1_ticks() - t0);
+        {
+            uint32_t tk = fm1_ticks() - t0;
+            PERF_HALF(tk - t5_nested_ticks, tk);
+            us = shed_check(tk);
+        }
         if (us > audio_max_us)
             audio_max_us = us;
         {

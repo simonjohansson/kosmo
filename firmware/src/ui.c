@@ -295,9 +295,18 @@ static void ui_input(void)
     if (!memcmp(sig, ui_sig, sizeof sig))
         return;
     ui_last = fm1_ms;
+#if KOSMO_PERF
+    uint32_t pt0 = fm1_ticks(), pt1;
+#endif
     if (ui_sig[0] != sig[0] || ui_sig[6] != sig[6]) {          /* a new page, or the banner: all of it */
         memcpy(ui_sig, sig, sizeof sig);
         ui_rect((rc_t){0, 0, 240, 240});
+#if KOSMO_PERF
+        pt1 = fm1_ticks() - pt0;
+        lcd_sync();
+        pf_acc(&pf_page, pt1);
+        pf_acc(&pf_pagef, fm1_ticks() - pt0);
+#endif
         return;
     }
     /* a knob step: its bar first (the quick feedback), then the picture, which always shows the latest state, so steps
@@ -309,5 +318,32 @@ static void ui_input(void)
             ui_rect(bar_rc((int32_t)i));
     if (ui_page == 0 && old[1] != sig[1])
         ui_rect(R_TITLE);
+#if KOSMO_PERF
+    pt1 = fm1_ticks();
+#endif
     ui_rect(R_PIC);
+#if KOSMO_PERF
+    pf_acc(&pf_pic, fm1_ticks() - pt1);
+    pf_acc(&pf_step, fm1_ticks() - pt0);
+    lcd_sync();
+    pf_acc(&pf_stepf, fm1_ticks() - pt0);
+#endif
 }
+
+#if KOSMO_PERF
+static void perf_cc(uint32_t cc, uint32_t v)
+{
+    if (cc == 102u)
+        ui_page = (uint8_t)(v & 3u);
+    else if (cc == 103u)
+        trk[0].p[P_E0] = (int16_t)(v & 7u);
+    else if (cc == 104u)
+        trk[0].p[P_E1] = (int16_t)v;
+    else if (cc == 105u)
+        trk[0].p[P_E4] = (int16_t)(v > 4u ? 4u : v);
+    else if (cc == 106u)
+        trk[0].p[P_DETUNE] = (int16_t)v;
+    else
+        trk[0].p[P_E2] = (int16_t)v;                 /* 107: cutoff */
+}
+#endif
