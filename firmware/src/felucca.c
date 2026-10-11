@@ -72,7 +72,7 @@
 
 /* -------------------------------------------------------------- UI --- */
 #include "panel.c"
-#include "ui.c"                  /* the placeholder screen, OCT-/OCT+ */
+#include "ui.c"                  /* the kids UI pages, OCT-/OCT+ */
 #include "icons.c"               /* the icon atlas */
 
 /* ---------------------------------------------- storage, update --- */

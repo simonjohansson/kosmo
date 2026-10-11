@@ -5,16 +5,6 @@
  * One bright colour per page, a big picture in the middle. No framebuffer: the screen is drawn in two 240 x 120
  * strips (cv_oy shifts screen coordinates into the strip) and only when something it shows has changed. */
 
-/* stub until DSP branch lands */
-static const char *const WAVE_NAMES[8] = {"SINE", "TRI", "SAW", "SQUARE", "PULSE", "SYNC", "SUB", "NOISE"};
-static int16_t wave_peek(int table, int scan, int i)
-{
-    int32_t ph = (i * 2) & 127, t = ph < 64 ? ph * 512 - 16384 : 49152 - ph * 512;   /* a triangle, squarer with scan */
-    (void)table;
-    return (int16_t)(t * (128 - scan) / 128 + (i < 128 ? 12000 : -12000) * scan / 128);
-}
-/* end of stub */
-
 #define INK RGB(40, 28, 80)
 #define WHITE RGB(255, 255, 255)
 #define PX 10                       /* the picture's panel */
