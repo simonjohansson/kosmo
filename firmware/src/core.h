@@ -4,6 +4,12 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------ sizes --- */
+#if KOSMO_PERF
+static uint32_t pfx_s[8], pfx_n[8];   /* section timers (perf.c prints them): 0 events 1 mix_part 2 voice render 3 reverb 4 master 5 uac+out */
+#define PFX(k, code) do { uint32_t _t = fm1_ticks(); code; pfx_s[k] += fm1_ticks() - _t; pfx_n[k]++; } while (0)
+#else
+#define PFX(k, code) code
+#endif
 #define NVOICE 8                 /* voices of the part */
 #define NPART 1                  /* synth parts */
 #define NTRK NPART

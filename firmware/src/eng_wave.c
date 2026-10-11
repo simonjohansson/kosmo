@@ -48,6 +48,9 @@ static void wave_note_on(track_t *t, voice_t *v)
 
 static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
+#if KOSMO_PERF
+    uint32_t _tw = fm1_ticks();
+#endif
     const int16_t *p = t->p, *fa, *fb;
     int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s;
     uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE], i;
@@ -75,6 +78,9 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     } else {
         lad_t flt;
         lad_coef(&flt, sc + m->cutoff, sr, ft);
+#if KOSMO_PERF
+        pfx_s[5] += fm1_ticks() - _tw; pfx_n[5]++; _tw = fm1_ticks();
+#endif
 #define LAD_LOOP(FT)                                                                           \
     for (i = 0; i < n; i++) {                                                                  \
         s = wave_read(fa, fb, w, ph);                                                          \
@@ -89,6 +95,9 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         default: LAD_LOOP(3) break;
         }
     }
+#if KOSMO_PERF
+    pfx_s[6] += fm1_ticks() - _tw; pfx_n[6]++;
+#endif
     v->ph[0] = ph;
     v->s[0] = st[0];
     v->s[1] = st[1];

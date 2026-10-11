@@ -470,7 +470,7 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         m.shape = (64 << 8) + ((m.envq15 * p[P_ED_SHP]) >> 7);
-        e->render(t, v, out, n, &m);
+        PFX(2, e->render(t, v, out, n, &m));
         nr++;
     }
     return nr;

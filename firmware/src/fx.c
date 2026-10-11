@@ -134,9 +134,12 @@ static void mix_block(int32_t *out, uint32_t n)
         send_r[i] = mix_l[i] = mix_r[i] = 0;
         wet[i] = 0;
     }
-    events_block(n);
-    mix_part(&trk[0], n);
-    rev_room(send_r, wet, n);
+    PFX(0, events_block(n));
+    PFX(1, mix_part(&trk[0], n));
+    PFX(3, rev_room(send_r, wet, n));
+#if KOSMO_PERF
+    uint32_t _t4 = fm1_ticks();
+#endif
     for (i = 0; i < n; i++) {
         int32_t l = (((mix_l[i] + wet[i]) >> 2) * mg) >> 10;
         int32_t r = (((mix_r[i] + wet[i]) >> 2) * mg) >> 10;
@@ -144,4 +147,8 @@ static void mix_block(int32_t *out, uint32_t n)
         out[2u * i] = l;
         out[2u * i + 1u] = r;
     }
+#if KOSMO_PERF
+    pfx_s[4] += fm1_ticks() - _t4;
+    pfx_n[4]++;
+#endif
 }

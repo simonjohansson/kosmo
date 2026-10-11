@@ -63,7 +63,9 @@ def main():
             if c:
                 s += f" | {lab} {ms(sum(w[k + 's'] for w in ws) / c):.1f}ms/{ms(max(w[k + 'x'] for w in ws)):.0f}max n{c}"
         t5 = sum(w["ts"] + w["us"] for w in ws) / len(ws) / 24e6 * 100
-        print(s + f" | TIMER5 {t5:.1f}% of CPU")
+        parts = " ".join(f"{k}:{sum(w[k + 's'] for w in ws) / max(sum(w[k + 'n'] for w in ws), 1) / 24:.1f}us*{sum(w[k + 'n'] for w in ws) // len(ws)}/s"
+                         for k in ("i", "ub", "ua") if k + "n" in ws[0])
+        print(s + f" | TIMER5 {t5:.1f}% of CPU [{parts}]")
         spi = ws[-1]["spi"] - ws[0]["spi"]
         if spi:
             print(f"{'':28s} SPI {spi / (len(ws) - 1)} B/s  bss {ws[-1]['bss']} pool {ws[-1]['pool']}")

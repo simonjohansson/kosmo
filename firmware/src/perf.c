@@ -3,9 +3,10 @@
  * out ring. Window counters reset after each line. The audio ISR and ui_input feed it (PERF_* hooks). */
 typedef struct { uint32_t n, sum, max; } perf_acc_t;
 static perf_acc_t pf_render, pf_all;                /* audio ISR: render alone, and with TIMER5 nested */
+static perf_acc_t pf_in, pf_usbp, pf_uartp;       /* TIMER5 parts: fm1_input_tick, usb_poll, uart_midi_poll */
 static perf_acc_t pf_t5, pf_t5n;                  /* TIMER5 ISR: outside the audio ISR / nested in it */
 static perf_acc_t pf_step, pf_stepf, pf_page, pf_pagef, pf_pic;   /* ui_input: cpu time / until the panel has it */
-static char pf_b[320];
+static char pf_b[640];
 static uint32_t pf_l;
 
 static void pf_acc(perf_acc_t *a, uint32_t t) { a->n++; a->sum += t; if (t > a->max) a->max = t; }
@@ -42,6 +43,7 @@ static void pf_flush(void)
     pf_l = 0;
 }
 
+
 static void perf_service(void)                 /* main loop */
 {
     static uint32_t next, seq;
@@ -55,7 +57,10 @@ static void perf_service(void)                 /* main loop */
     pf_acc_kv("r", &pf_render); pf_acc_kv("a", &pf_all);
     pf_acc_kv("st", &pf_step); pf_acc_kv("sf", &pf_stepf);
     pf_acc_kv("pg", &pf_page); pf_acc_kv("pf", &pf_pagef); pf_acc_kv("pc", &pf_pic);
+    pf_acc_kv("i", &pf_in); pf_acc_kv("ub", &pf_usbp); pf_acc_kv("ua", &pf_uartp);
     pf_acc_kv("t", &pf_t5); pf_acc_kv("u", &pf_t5n);
+    { uint32_t k; char nm[4] = "xN";
+      for (k = 0; k < 7u; k++) { nm[1] = (char)('0' + k); pf_kv(nm, pfx_s[k]); nm[2] = 'n'; pf_kv(nm, pfx_n[k]); nm[2] = 0; pfx_s[k] = pfx_n[k] = 0; } }
     pf_kv("spi", lcd_bytes);
     pf_kv("late", felucca_dbg.late);
     pf_kv("shed", shed_count);

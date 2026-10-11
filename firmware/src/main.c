@@ -21,7 +21,13 @@ void fm1_timer5_irq(void)
     uint32_t t0 = fm1_ticks(), usb_due = sub % 5u == 0u;
     fm1_timer5_ack();
     felucca_dbg.timer_irqs++;
+#if KOSMO_PERF
+    uint32_t pt = fm1_ticks();
+#endif
     fm1_input_tick();
+#if KOSMO_PERF
+    pf_acc(&pf_in, fm1_ticks() - pt);
+#endif
     {   /* milliseconds from the 24 MHz TIMER4 (robust to a late tick) */
         static uint32_t last, acc;
         acc += t0 - last;
@@ -51,11 +57,21 @@ void fm1_timer5_irq(void)
 #endif
         return;
     }
+#if KOSMO_PERF
+    pt = fm1_ticks();
+#endif
     if (owed & 1u)
         usb_poll();
+#if KOSMO_PERF
+    if (owed & 1u) pf_acc(&pf_usbp, fm1_ticks() - pt);
+    pt = fm1_ticks();
+#endif
 #if KOSMO_UART
     if (owed & 2u)
         uart_midi_poll();
+#endif
+#if KOSMO_PERF
+    if (owed & 2u) pf_acc(&pf_uartp, fm1_ticks() - pt);
 #endif
     owed = 0;
 #if KOSMO_PERF
@@ -133,6 +149,41 @@ static void boot_leds(void)
     if (boot_clean)
         fm1_led_anim_start(settings_leds == LEDS_DIM || settings_leds == LEDS_DIM_LO);
 }
+
+#if KOSMO_LCD_TEST
+/* #19 bench: instead of the UI, one stress picture per call (checkerboard, a bit-toggling stream, colour bars,
+ * a grey ramp, small text); any speckle, shifted rows or wrong colours mean the SPI clock is too fast */
+static uint16_t lt_row[240];
+static void lcd_test(void)
+{
+    static const uint16_t bar[8] = {0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000};
+    static uint32_t f;
+    char t[16] = "BAUD n  #n";
+    uint32_t x, y;
+    for (y = 0; y < 192u; y++) {
+        lcd_sync();
+        for (x = 0; x < 240u; x++) {
+            uint16_t c;
+            if (y < 48u)
+                c = (x ^ y) & 1u ? 0xFFFF : 0x0000;
+            else if (y < 96u)
+                c = (x >> 3 ^ y >> 1) & 1u ? 0xAA55 : 0x55AA;
+            else if (y < 144u)
+                c = bar[x / 30u];
+            else
+                c = (uint16_t)(((x >> 3) << 11) | ((x >> 2) << 5) | (x >> 3));
+            lt_row[x] = (uint16_t)(c >> 8 | c << 8);
+        }
+        lcd_blit(0, y, 240, 1, lt_row);
+    }
+    lcd_fill(0, 192, 240, 48, 0);
+    t[5] = (char)('0' + LCD_BAUD);
+    t[9] = (char)('0' + f++ % 10u);
+    draw_text_box(0, 194, 240, &AF_S, "small text 0123456789 abcdefg", 0xFFFF, 0);
+    draw_text_box(0, 214, 240, &AF_M, t, 0xFFFF, 0);
+}
+#define ui_input lcd_test
+#endif
 
 static void fm1_main(void)
 {

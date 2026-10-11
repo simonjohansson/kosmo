@@ -196,6 +196,9 @@ def build_app():
     v = os.environ.get("KOSMO_USB_LAYOUT")   # firmware/src/usb.c: how the USB composite presents itself (#67), 0..3
     if v in ("0", "1", "2", "3"):
         flags.append(f"-DKOSMO_USB_LAYOUT={v}")
+    for env, d in (("KOSMO_LCD_BAUD", "LCD_BAUD"), ("KOSMO_LCD_TEST", "KOSMO_LCD_TEST")):   # #19 bench, ints only
+        if os.environ.get(env, "").isdigit():
+            flags.append(f"-D{d}={os.environ[env]}")
     flags.append(f'-DKOSMO_ID="{PRODUCT}"')
     if VERSION:
         flags.append(f'-DKOSMO_VERSION="{VERSION}"')
