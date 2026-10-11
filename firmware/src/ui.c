@@ -417,7 +417,17 @@ static void perf_cc(uint32_t cc, uint32_t v)
         trk[0].p[P_E4] = (int16_t)(v > 4u ? 4u : v);
     else if (cc == 106u)
         trk[0].p[P_DETUNE] = (int16_t)v;
+    else if (cc == 107u)
+        trk[0].p[P_E2] = (int16_t)v;                 /* cutoff */
+    else if (cc == 108u)
+        preset_load(v);
+    else if (cc == 109u)
+        song.g[G_ECHAR] = (int16_t)(v % 5u);
+    else if (cc == 110u)
+        song.g[G_EAMT] = (int16_t)v;
+    else if (cc == 111u)
+        song.g[G_RPROG] = (int16_t)(v % 6u);
     else
-        trk[0].p[P_E2] = (int16_t)v;                 /* 107: cutoff */
+        trk[0].p[P_REV] = (int16_t)v;                /* 112: SPACE amount */
 }
 #endif

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Device benchmark for a KOSMO_PERF=1 KOSMO_CDC=1 build: drives notes/knobs over USB-MIDI (CC 102 page, 103 wave,
-104 scan, 105 fat, 106 detune) and reads the "P ..." / "C ..." lines from the CDC port.
+104 scan, 105 fat, 106 detune, 107 cutoff, 108 preset, 109 ECHO char, 110 ECHO amount, 111 SPACE program, 112 SPACE amount) and reads the "P ..." / "C ..." lines from the CDC port.
 
     tools/perf_host.py [--port /dev/cu.usbmodemXXXX] [--secs 5]
 """
@@ -16,6 +16,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default=(glob.glob("/dev/cu.usbmodem*") or [None])[0])
     ap.add_argument("--secs", type=int, default=5)
+    ap.add_argument("--space", action="store_true", help="only the ECHO CLEAN + SPACE program sweep (issue #27)")
     ap.add_argument("--midi", default="Felucca")
     a = ap.parse_args()
     ser = serial.Serial(a.port, 115200, timeout=0.2)
@@ -72,6 +73,15 @@ def main():
 
     notes(False); cc(123, 0); cc(102, 0); cc(105, 0)
     time.sleep(2)
+    if a.space:                                       # 8 notes, ECHO CLEAN (amount 64), SPACE amount 100, each program, FAT 0 / 4
+        names = ("BEDROOM", "CASTLE", "PLATE", "CLOUD", "GATED", "WOBBLE")
+        cc(108, 0); cc(109, 0); cc(110, 64); cc(112, 100)
+        for fat in (0, 4):
+            for p in range(6):
+                phase(f"FAT{fat} {names[p]}", lambda: (notes(False), cc(111, p), cc(105, fat), time.sleep(1.5), notes(True)))
+        notes(False)
+        stop = True
+        return
     phase("idle HOME FAT0", lambda: None)
     chord = lambda on: [out.send(mido.Message("note_on" if on else "note_off", note=n, velocity=100 if on else 0)) for n in (60, 64, 67)]
     phase("chord(3) FAT0", lambda: (cc(105, 0), chord(True)))
