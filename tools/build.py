@@ -36,6 +36,7 @@ import lz4blk  # noqa: E402
 
 APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL jumps here
 APP_SLOT = fm1pkg_make.APP_SLOT
+APP_RESERVE = 48 * 1024                 # flash kept free for the next features (SPACE reverb, #21) and growth
 LOADER_LOAD = 0x01C0A800
 LOADER_NAME = b"usb_hid_ota.bin"    # the file name the SPL looks for
 DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
@@ -271,6 +272,8 @@ def check(img, syms, dis, rt):
                 errors.append(f"reference to ROM address {val:#010x}")
     if len(img) > APP_SLOT:
         errors.append(f"image {len(img)} B exceeds the app slot")
+    elif len(img) > APP_SLOT - APP_RESERVE:
+        errors.append(f"image {len(img)} B leaves under {APP_RESERVE} B of the {APP_SLOT} B app slot free (wavetables?)")
 
     def sym(name):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)

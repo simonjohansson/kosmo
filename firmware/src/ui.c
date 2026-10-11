@@ -19,7 +19,7 @@ typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
 #define PG_SPACE 3
 #define PG_ECHO 4
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[NPG] = {
-    {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
+    {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], NWAVES - 1, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
                                           {"Fat", &trk[0].p[P_E4], 4, 1}, {"Detune", &trk[0].p[P_DETUNE], 127, 4}}},
     {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 4, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
@@ -119,7 +119,7 @@ static void wave_layer(int32_t c)
     int32_t i, amp = 46 * (100 - 6 * c) / 100, sh = (c + 1) / 2 * trk[0].p[P_DETUNE] / 6 * (c & 1 ? 1 : -1);
     for (i = 0; i < 128; i++) {
         pt[i][0] = (int16_t)(PX + 10 + i * 200 / 127 + 3 * c);
-        pt[i][1] = (int16_t)(PY + PH / 2 - 5 * c - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2 + sh) * amp) >> 15));
+        pt[i][1] = (int16_t)(PY + PH / 2 - 5 * c - ((wave_peek(trk[0].p[P_E0], trk[0].p[P_E1], i * 2 + sh) * amp) >> 15));
     }
 }
 
@@ -200,7 +200,7 @@ static void pic_echo(void)
         for (i = 0; i < 32; i++) {
             int32_t y;
             if (!(ch == 4 && i % 6))                             /* ROBOT holds every 6th point */
-                y = (wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], (ch == 3 ? 31 - i : i) * 8) * amp) >> 15;
+                y = (wave_peek(trk[0].p[P_E0], trk[0].p[P_E1], (ch == 3 ? 31 - i : i) * 8) * amp) >> 15;
             else
                 y = h;
             y = ch == 1 ? clamp(y * 8 / 5, -amp * 6 / 10, amp * 6 / 10) : ch == 2 ? y / 6 * 6 : y;
@@ -234,7 +234,7 @@ static void scene(void)
 {
     uint16_t bg = PG[ui_page].bg, track = ux_mix(0, bg, 20);
     int32_t n = ui_nk(), i, gap = 6, bw, ty = clamp(trk[0].p[P_FTYPE], 0, 4);
-    const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
+    const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[clamp(trk[0].p[P_E0], 0, NWAVES - 1)];
     if (ui_hit(R_TITLE)) {
         cv_text(12, 4, &AF_L, title, bg);
         if (PG[ui_page].btn == B_FX) {                         /* which FX page: 1/2 ECHO, 2/2 SPACE */
@@ -380,7 +380,7 @@ static void perf_cc(uint32_t cc, uint32_t v)
     if (cc == 102u)
         ui_page = (uint8_t)(v & 3u);
     else if (cc == 103u)
-        trk[0].p[P_E0] = (int16_t)(v & 7u);
+        trk[0].p[P_E0] = (int16_t)(v % NWAVES);
     else if (cc == 104u)
         trk[0].p[P_E1] = (int16_t)v;
     else if (cc == 105u)

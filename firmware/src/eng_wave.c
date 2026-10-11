@@ -1,18 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* WAVE: one wavetable oscillator through a Moog ladder filter (LP / BP / HP / NOTCH) or a comb (P_FTYPE).
- * WAVE picks one of 8 tables, SCAN moves through its 8 frames (simple to bright), CUT and RES set the filter.
+ * WAVE picks one of 12 tables, SCAN moves through its 64 frames (each table a designed morph), CUT and RES set the filter.
  * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). SCAN, CUT and RES are smoothed once per block. */
 #include "kosmo_waves.h"
 
-static const char *const WAVE_NAMES[8] = {"ROBOT", "CHOIR", "BELLS", "BUZZ", "ORGAN", "GLASS", "PULSE", "ZAP"};
+/* the order of TABLES in tools/gen_waves.py; AF_L has no lowercase, so upper case only */
+static const char *const WAVE_NAMES[NWAVES] = {"ROBOT TALK", "LASER", "MONSTER", "ZAP", "CHIPTUNE", "ALIEN", "BUBBLES",
+                                               "CRYSTAL", "DRAGON", "GHOST", "SPACE ORGAN", "WILD"};
 
 /* the frame pair and the weight (Q8) of B for SCAN scan_q8 (0..127 << 8) */
 static inline void wave_frames(int32_t table, int32_t scan_q8, const int16_t **a, const int16_t **b, int32_t *w)
 {
-    int32_t fp = scan_q8 * 7 / 127, f = fp >> 8;       /* frame position, Q8: 0..7 << 8 */
-    *a = WAVES[table & 7][f];
-    *b = WAVES[table & 7][f < 7 ? f + 1 : 7];
+    int32_t fp = scan_q8 * (WAVE_FRAMES - 1) / 127, f = fp >> 8;   /* frame position, Q8: 0..63 << 8 */
+    table = clamp(table, 0, NWAVES - 1);
+    *a = WAVES[table][f];
+    *b = WAVES[table][f < WAVE_FRAMES - 1 ? f + 1 : WAVE_FRAMES - 1];
     *w = fp & 255;
 }
 
@@ -143,7 +146,7 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
 static const engine_t ENG_WAVE = {
     .name = "WAVE",
     .edit = {
-        {"WAVE", F_ENUM, 0, 7, 0, WAVE_NAMES, 0},
+        {"WAVE", F_ENUM, 0, NWAVES - 1, 0, WAVE_NAMES, 0},
         {"SCAN", F_PCT, 0, 127, 0, 0, 0},
         {"CUT", F_CUTOFF, 0, 127, 90, 0, 0},
         {"RES", F_PCT, 0, 127, 30, 0, 0},

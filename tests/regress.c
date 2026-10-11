@@ -171,7 +171,7 @@ static void job_sound(const job_t *j)
     phrase(&trk[0], 60);
 }
 
-static void job_wave(const job_t *j)            /* arg: WAVE 0..7 on the default sound */
+static void job_wave(const job_t *j)            /* arg: WAVE 0..NWAVES-1 on the default sound */
 {
     host_tracks_init();
     trk[0].p[P_E0] = j->arg;
@@ -460,13 +460,45 @@ static void steps(uint32_t blocks, int32_t *maxd, double *sum)
     }
 }
 
+/* every frame of every table: peak 32000, no DC, and the next frame not far from it (the scan blends them, a jump is a click) */
+static int chk_wavetab(char *msg, uint32_t n)
+{
+    uint32_t tb, f, i, bad = 0;
+    double worst = 0;
+    for (tb = 0; tb < NWAVES; tb++)
+        for (f = 0; f < WAVE_FRAMES; f++) {
+            const int16_t *a = WAVES[tb][f];
+            int32_t pk = 0, sum = 0;
+            double d = 0, e = 0, e2 = 0;
+            for (i = 0; i < 256u; i++) {
+                pk = abs(a[i]) > pk ? abs(a[i]) : pk;
+                sum += a[i];
+            }
+            bad += pk < 31999 || pk > 32000 || abs(sum) > 256;
+            if (f + 1u < WAVE_FRAMES) {
+                const int16_t *b = WAVES[tb][f + 1];
+                for (i = 0; i < 256u; i++) {
+                    d += (double)(a[i] - b[i]) * (a[i] - b[i]);
+                    e += (double)a[i] * a[i];
+                    e2 += (double)b[i] * b[i];
+                }
+                d = sqrt(d / (e > e2 ? e : e2));
+                worst = d > worst ? d : worst;
+                bad += d > 1.2;
+            }
+        }
+    snprintf(msg, n, "%u tables x %u frames: %u not normalised, DC-free and smooth to the next (worst step %.2f of 1.2)",
+             NWAVES, WAVE_FRAMES, bad, worst);
+    return !bad;
+}
+
 /* SCAN swept 0..127 in one second on a held note, every table: no click (bounded step), and the frames differ */
 static int chk_scan(char *msg, uint32_t n)
 {
     uint32_t tb, k, bad = 0, nb = FS / CTL;
     int32_t worst = 0;
     track_t *t = &trk[0];
-    for (tb = 0; tb < 8u; tb++) {
+    for (tb = 0; tb < NWAVES; tb++) {
         int32_t md = 0, md2 = 0, ref;
         double s0 = 0, s1 = 0, l0, l1;
         host_tracks_init();
@@ -498,8 +530,8 @@ static int chk_scan(char *msg, uint32_t n)
         trk_note_off(t, 48);
         run_to(fpos + FS / 2u);
     }
-    snprintf(msg, n, "SCAN sweep, 8 tables: largest step %d (limit 2x the steady frames' own), %u tables with a click or without a change",
-             worst, bad);
+    snprintf(msg, n, "SCAN sweep, %u tables x %u frames: largest step %d (limit 2x the steady frames' own), %u tables with a click or without a change",
+             NWAVES, WAVE_FRAMES, worst, bad);
     return !bad;
 }
 
@@ -1162,8 +1194,9 @@ int main(int argc, char **argv)
         j = add(J_SOUND, name);
         j->pi = (uint8_t)pi;
     }
-    for (i = 0; i < 8u; i++) {
-        snprintf(name, sizeof name, "wave/%s", WAVE_NAMES[i]);
+    for (i = 0; i < NWAVES; i++) {
+        slug(s, WAVE_NAMES[i], sizeof s);
+        snprintf(name, sizeof name, "wave/%s", s);
         add(J_WAVE, name)->arg = (uint8_t)i;
     }
     for (i = 0; i < 3u; i++)
@@ -1213,6 +1246,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "voices: budget after a live mode change")->check = chk_mode_budget;
     add(J_CHECK, "voices: note-offs after live voice mode changes")->check = chk_mode_release;
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
+    add(J_CHECK, "wave: tables normalised, DC-free, smooth")->check = chk_wavetab;
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
