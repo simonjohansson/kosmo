@@ -3,8 +3,8 @@
  * The design (the device clock driven by the audio the worklet asks for, the exports below, the saved
  * flash handed back before boot) follows X0X's browser build, web/emu/x0x_web.c of charlesvestal/fm1-x0x
  * (GPL-3.0), a Felucca fork. */
-/* Felucca in the browser: the firmware's sources, as the host tests build them (tests/hostsim.c: libc,
- * engines, voices, FX, sequencer; then the UI, main.c, storage and projects, in src/felucca.c's order),
+/* Kosmo in the browser: the firmware's sources, as the host tests build them (tests/hostsim.c: libc,
+ * engine, voices, FX, keys and MIDI; then the placeholder UI, main.c and storage, in src/felucca.c's order),
  * compiled to WebAssembly and run in an AudioWorklet against a simulated FM-1:
  *   - the device clock: TIMER4 ticks (24 MHz) and fm1_ms advance with the audio the worklet asks for; the
  *     audio ISR (audio.c fm1_alnk0_irq, the real one) renders each I2S half (HALF_FRAMES) as the DMA would
@@ -13,17 +13,15 @@
  *   - the panel: buttons and encoders by their printed labels (panel.c's table maps them to the matrix),
  *     the keys as fm1_in.notes, the LEDs read back from fm1_led / fm1_led_dim through the key matrix;
  *   - the screen: lcd_fill / lcd_blit into a 240 x 240 RGB565 frame (the panel's byte order);
- *   - the flash: a 1 MiB NOR image behind storage.c's hooks (settings, projects, user presets, the user
- *     sample slots read through it as XIP); the page keeps its storage sectors and gives them back at boot.
+ *   - the flash: a 1 MiB NOR image behind storage.c's hooks (the settings); the page keeps its storage sectors and
+ *     gives them back at boot.
  * Not here: USB (MIDI, audio, the editor, updates), TRS MIDI, the serial console, the battery (full), the
  * crash / UBOOT paths. Nothing of the firmware changes for this file.
  *   web/emu/build.sh  ->  build/emu/{felucca.wasm, worklet.js, index.html} */
 #include <stdint.h>
 
 #define FELUCCA_WEB 1
-#ifndef FELUCCA_CDC
-#define FELUCCA_CDC 1                    /* as src/felucca.c: MENU > USB SERIAL is there (nothing behind it) */
-#endif
+#define FELUCCA_CDC 0
 #define FELUCCA_FLASH 1
 #define FELUCCA_OTA 0
 #define FELUCCA_UAC 0
@@ -33,7 +31,6 @@
 #endif
 
 static uint8_t nor[0x100000];            /* the SPI NOR (erased: 0xFF) */
-#define SMP_USER_XIP(k) ((const uint8_t *)nor + SMP_USER_BASE + (k) * SMP_USER_SIZE)   /* eng_sample.c */
 #define main hostsim_main
 #include "../../tests/hostsim.c"
 #undef main
@@ -147,26 +144,12 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
     web_draws++;
 }
 static void lcd_sync(void) {}
-static void lcd_power(uint32_t s)              /* MENU > SCREEN OFF (lcd.c): off, the page dark; on: redrawn before */
-{
-    if (!s) {
-        memset(web_fb, 0, sizeof web_fb);
-        web_draws++;
-    }
-}
-static void lcd_wake_now(void) {}
 static void lcd_init(void) {}
 
 #include "../../firmware/src/gfx.c"
 #include "../../firmware/src/panel.c"
 #include "../../firmware/src/ui.c"
-#include "../../firmware/src/menu_items.c"
 #include "../../firmware/src/icons.c"
-#include "../../firmware/src/ui_graph.c"
-#include "../../firmware/src/ui_draw.c"
-#include "../../firmware/src/ui_menu.c"
-#include "../../firmware/src/ui_input.c"
-#include "../../firmware/src/ui_layer.c"
 
 /* ------------------------------------------------------------ the flash --- */
 static uint32_t web_flash_writes;
@@ -199,12 +182,11 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)       /* NOR: a wr
 }
 static uint32_t irq_save(void) { return 0; }
 static void irq_restore(uint32_t f) { (void)f; }
-static uint32_t fl_jedec_ram(void) { return 0x856014u; }             /* the FM-1's part (project.c) */
+static uint32_t fl_jedec_ram(void) { return 0x856014u; }             /* the FM-1's part (settings_persist.c) */
 static void fl_plain_window_init(void) {}
 #define FL_FAR(fn) (fn)
 #include "../../firmware/src/storage.c"
-#include "../../firmware/src/upreset.c"
-#include "../../firmware/src/project.c"
+#include "../../firmware/src/settings_persist.c"
 
 /* ------------------------------------------------- main.c and its HAL --- */
 typedef struct { uint32_t magic, count, vec, pc, emu, dbg, rets; } fm1_crash_t;
@@ -231,9 +213,6 @@ static void fm1_wdt_arm(uint32_t v) { (void)v; }
 static void fm1_mailbox_clear(void) {}
 static void fm1_guard_enable(uint32_t m) { (void)m; }
 enum { FM1_GUARD_STACK = 1, FM1_GUARD_WRITE = 2, FM1_GUARD_BUS = 4, FM1_GUARD_PC = 8 };
-#if FELUCCA_CDC
-static void cdc_task(void) {}
-#endif
 /* main.c's calls into the USB driver (registers): nothing here (usb.c's own functions stay as they are) */
 #define usb_poll() ((void)0)
 #define usb_start() ((void)0)
@@ -254,20 +233,18 @@ static void web_power_on(void)
 {
     persist_boot();
     settings_init();
-    usb_serial_apply();
     lcd_init();
-    draw_splash();                        /* main.c: the splash (ui_draw.c) */
+    draw_splash();                        /* main.c: the placeholder screen (ui.c) */
     memset(&felucca_dbg, 0, sizeof felucca_dbg);
     felucca_dbg.magic = DBG_MAGIC;
     fm1_input_init();
     fm1_adc_init();
     panel_init();
-    felucca_init();
+    kosmo_init();
     master_boot();                        /* main.c (#137): the pot's level from the first block */
     kb_boot_hold = 1;                     /* main.c (#137): the keys silent under the splash */
     audio_init();
     boot_leds();                          /* main.c: the power-on LED sweep, from the scan's start */
-    autosave_boot(boot_clean);            /* main.c: the last session's music (1.2, project.c) */
     web_boot_ms = fm1_ms + 430u;         /* main.c: 30 + 400 ms before the first frame */
     web_booted = 1;
 }
@@ -282,9 +259,6 @@ static void web_frame(void)
     felucca_dbg.ui_frames++;
     ui_input();
     settings_poll();
-    autosave_poll();
-    ui_leds();
-    ui_draw();
 }
 
 /* output ring, stereo float, filled by web_ms, drained by web_render */
@@ -315,7 +289,6 @@ static void web_ms(void)
     if (web_boot_ms) {                                    /* main.c: the splash goes, the loop starts */
         web_boot_ms = 0;
         kb_boot_hold = 0;
-        lcd_fill(0, 0, 240, 240, T_BG);
         web_last_frame = fm1_ms - 15u;
     }
     if (fm1_ms - web_last_frame >= 15u) {                /* main.c: a frame, then ui_input until 15 ms are over */
@@ -358,8 +331,8 @@ EXPORT void web_boot(void)
         web_power_on();
 }
 
-/* input, by the printed labels: buttons bit b = B_FX .. B_OCTUP (panel.c), keys bit k = key k (F3 .. G5),
- * encoders by role (EN_SELECT .. EN_K4), MASTER 0..1023 */
+/* input, by the printed labels: buttons bit b = B_FX .. B_OCTUP (panel.c; only OCT- and OCT+ do anything), keys bit
+ * k = key k (F3 .. G5), encoders by role (EN_SELECT .. EN_K4; none does anything), MASTER 0..1023 */
 static uint32_t web_btn_labels, web_key_mask;
 EXPORT void web_buttons(uint32_t labels)
 {
@@ -394,7 +367,7 @@ EXPORT uint32_t web_midi(uint32_t status, uint32_t d1, uint32_t d2)
     return (uint32_t)midi_enqueue((status >> 4) | status << 8 | (d1 & 127u) << 16 | (d2 & 127u) << 24, 1);
 }
 
-/* the LEDs: bit b = the button labelled b lit (bit 14: PLAY's green), keys bit k; the dim glow and the breath alike */
+/* the LEDs: bit b = the button labelled b lit, keys bit k; the dim glow and the breath alike */
 static uint32_t led_on(const uint8_t *l, uint32_t id)
 {
     uint32_t c, r;
@@ -420,7 +393,7 @@ static uint32_t led_keys(const uint8_t *l)
 }
 EXPORT uint32_t web_lit_buttons(void)
 {
-    return led_buttons(fm1_led) | ((fm1_led[LED_PLAY_GREEN >> 3] >> (LED_PLAY_GREEN & 7u)) & 1u) << 14;
+    return led_buttons(fm1_led);
 }
 EXPORT uint32_t web_lit_keys(void) { return led_keys(fm1_led); }
 EXPORT uint32_t web_dim_buttons(void) { return led_buttons(fm1_led_dim); }
@@ -443,44 +416,22 @@ EXPORT uint8_t *web_anim_levels(void)
     return lv;
 }
 
-/* for the test and the bench (web/emu/emu_test.mjs), a heavy song straight into the tracks (as hostsim's
- * renders set them): T1 FM6 PAD, T2 PHYS DRONE STRING (SYMP), T3 GRAIN CLOUD PAD, 4-note chords on all 16
- * steps, held; T4 DRUM, kick snare and hats. PLAY is the page's (or the test's) to press */
+/* for the test and the bench (web/emu/emu_test.mjs): eight notes held on the STRINGS sound, SUS 127, a big reverb
+ * send: the part at its busiest */
 EXPORT void web_test_heavy(void)
 {
-    static const uint8_t ENG[3][2] = {{12, 4}, {ENGI_PHYS, 7}, {8, 0}};
-    static const uint8_t CH[4][4] = {{48, 55, 60, 64}, {45, 52, 57, 60}, {41, 48, 53, 57}, {43, 50, 55, 59}};
-    uint32_t p, i;
-    for (p = 0; p < 3u; p++) {
-        track_t *t = &trk[p];
-        host_preset(t, ENG[p][0], ENG[p][1]);
-        t->p[P_VOICE] = V_POLY;
-        t->p[P_SUS] = 127;
-        for (i = 0; i < 16u; i++) {
-            uint8_t n[4], k;
-            for (k = 0; k < 4u; k++)
-                n[k] = (uint8_t)(CH[i / 4u][k] + 12u * p);
-            put_step(t, i, 4, n, ST_NOTE, 0);
-        }
-    }
-    host_drums(&trk[3]);
-    for (i = 0; i < 16u; i++) {
-        uint8_t n[4];
-        uint32_t k = 0;
-        if (i % 4u == 0u)
-            n[k++] = 36;
-        if (i == 4u || i == 12u)
-            n[k++] = 38;
-        n[k++] = i % 2u ? 42 : 46;
-        put_step(&trk[3], i, k, n, ST_NOTE, 0);
-    }
-    ui.force = 1;
+    static const uint8_t NOTES[8] = {48, 52, 55, 59, 60, 64, 67, 71};
+    uint32_t i;
+    host_sound(&trk[0], 11);
+    trk[0].p[P_VOICE] = V_POLY;
+    trk[0].p[P_SUS] = 127;
+    for (i = 0; i < 8u; i++)
+        trk_note_on(&trk[0], NOTES[i], 100);
 }
 
-EXPORT uint32_t web_test_user_preset(uint32_t i) { return (uint32_t)up_used(i); }
+EXPORT uint32_t web_test_octave(void) { return (uint32_t)(song.octave + 8); }
 
 EXPORT uint16_t *web_screen(void) { return web_fb; }
 EXPORT uint32_t web_screen_draws(void) { return web_draws; }
 EXPORT uint32_t web_now_ms(void) { return fm1_ms; }
-EXPORT uint32_t web_playing(void) { return song.playing; }
 EXPORT uint32_t web_sample_rate(void) { return FS; }

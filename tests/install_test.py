@@ -2,15 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """tools/fm1_install.py against a simulated FM-1 (no hardware, no mido).
-The fake device is the one in web/test_web.mjs: identity on the handshake,
-then "device asks, host answers" reads of the logical image. Run from the repo root:
-  python3 tests/install_test.py
-Also checks logical_image/product_of against web/fm1pkg.js (needs node and
-build/kosmo.fwsc, skipped otherwise)."""
+The fake device: identity on the handshake, then "device asks, host answers" reads of the
+logical image. Run from the repo root:
+  python3 tests/install_test.py"""
 import io
 import queue
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -210,14 +207,6 @@ def installs():
     rc, out, err = cli(["--info"], dev)
     ok(rc == 0 and "FM-1_905" in out and not any(c in out for c in "\x1b\x07"),
        "--info: control bytes in the device's identity are not printed")
-    import fm1_sample_upload as U
-    lines = U.slot_info([3, 80, 2, 0x41, 0x1B, 0x5B, 0x32, 0x4A, 0, 40, 0, 0, 0, 0, 0, 0])
-    ok(lines[0] == "USR1: 2 zones, A?[2J, 40 KiB" and lines[1] == "USR2: empty", "sample upload: slot names printable only")
-    try:
-        U.slot_info([3, 80, 2, 0x41])
-        ok(False, "sample upload: a malformed SMP_INFO reply is an error")
-    except ValueError:
-        ok(True, "sample upload: a malformed SMP_INFO reply is an error")
 
 
 def errors():
@@ -273,21 +262,6 @@ def errors():
     ok(rc == 2, "missing file -> exit 2")
 
 
-def against_js():
-    clean = ROOT / "build/kosmo.fwsc"
-    if not shutil.which("node") or not clean.exists():
-        print("logical image vs fm1pkg.js: skipped (needs node and build/kosmo.fwsc)")
-        return
-    js = ("import { logicalImage, productOf } from %r; import { readFileSync } from 'node:fs';"
-          "const p = readFileSync(process.argv[1]); process.stderr.write(productOf(p));"
-          "process.stdout.write(logicalImage(p));") % str(ROOT / "web/fm1pkg.js")
-    r = subprocess.run(["node", "--input-type=module", "-e", js, str(clean)], capture_output=True, check=True)
-    raw = clean.read_bytes()
-    ok(I.logical_image(raw) == r.stdout and I.product_of(raw) == r.stderr.decode(),
-       f"logical_image / product_of == fm1pkg.js ({clean.name}, {I.product_of(raw)})")
-    ok(I.LOADER_MARK in raw, f"{clean.name} carries the Felucca loader marker")
-
-
 def official():
     """#32: back to the official V15 from Felucca, without --force (only the unmodified file)"""
     v15 = ROOT / "FM-1_v15.fwsc"
@@ -309,7 +283,6 @@ def official():
 wire()
 installs()
 errors()
-against_js()
 official()
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"INSTALL TESTS FAILED ({failed})" if failed else "install tests passed")

@@ -52,6 +52,7 @@ static void settings_export(persist_t *p)
     p->bold = hold_to_stored(p->bold, settings_hold);
 }
 
+#if FELUCCA_FLASH
 static persist_t persist_saved __attribute__((section(".pool")));
 static uint8_t persist_pending;                 /* 1 requested, 2 waiting after a flash error */
 static uint32_t persist_retry_ms;
@@ -97,3 +98,8 @@ static void settings_save(void)
     persist_pending = 1;
     settings_poll();
 }
+#else
+static void persist_boot(void) {}
+static void settings_poll(void) {}
+static void settings_save(void) {}
+#endif

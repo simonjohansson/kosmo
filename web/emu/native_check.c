@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* web/emu/felucca_web.c built natively (cc, as the host tests), playing emu_test.mjs's heavy song with the same
+/* web/emu/felucca_web.c built natively (cc, as the host tests), playing emu_test.mjs's heavy chord with the same
  * gestures and the same render calls: its samples, float32 L R interleaved, to OUT. emu_test.mjs compares the
  * WebAssembly build's against them (the browser plays what the host build plays).
  *   cc -O2 -ffp-contract=off -w -Ibuild/gen -Ifirmware/src -o build/emu/native_check web/emu/native_check.c -lm
@@ -30,10 +30,6 @@ int main(int argc, char **argv)
     web_boot();
     render(500);
     web_test_heavy();
-    web_buttons(1u << B_PLAY);
-    render(60);
-    web_buttons(0);
-    render(60);
     rec = 1;
     render(2000);
     fclose(out);

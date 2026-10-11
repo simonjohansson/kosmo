@@ -3,7 +3,7 @@
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Install a Felucca package (.fwsc) on an FM-1 over USB-MIDI.
 
-The same update as the web installer (web/fm1ota.js): step 1, the
+The M-UPGRADE update: step 1, the
 running firmware reads parts of the package and starts the update loader;
 step 2, the loader reads the whole package and writes it. In both steps the
 device asks (SysEx read requests on the logical image) and we answer. Then
@@ -34,7 +34,7 @@ MAXDATA = 512
 BLOCKS, BLK, KEEP = 20, 0x30, 0x2F
 LOADER_MARK = b"FELUCCA-LOADER-1"
 # the unmodified official FM-1 V15 (FM-1.fwsc from M-VAVE): returning to it is allowed without --force,
-# as the web installer's "Return to official V15" (web/fm1pkg.js validateStockPackage)
+# "Return to official V15": only the unmodified stock package
 STOCK_V15_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a"
 PORT_RE = re.compile(r"fm-1|felucca|ota|composite|sinco|usb-midi", re.I)   # never probe other gear
 
