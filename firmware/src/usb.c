@@ -9,7 +9,7 @@
  * the main loop to enter UBOOT. VID 0x1209 / PID 0x0001 is the pid.codes
  * TEST id: fine for the bench, must be replaced before any release.
  * FELUCCA_CDC=1 adds a CDC-ACM serial function (IAD composite: EP2 notify,
- * EP3 bulk data) for the console in console.c; FELUCCA_USB_LAYOUT picks how
+ * EP3 bulk data) for a serial console (no console in Kosmo: FELUCCA_CDC=0); FELUCCA_USB_LAYOUT picks how
  * the composite presents itself, usb_cdc_switch / FELUCCA_CDC_DEFAULT=0 leave
  * the console out (descriptors, below).
  * FELUCCA_UAC=1 adds a USB audio input (UAC1, class compliant): the master
@@ -795,7 +795,7 @@ static void sysex_byte(uint8_t b)
         else if (sx_collect && sx_pos) {
             sx_frame_len = sx_pos;
             RING_PUBLISH();
-            sx_ready = 1;                               /* main loop: ota_take() / ed_service() */
+            sx_ready = 1;                               /* main loop: ota_take() */
         }
         sx_collect = 0;
 #endif
@@ -868,7 +868,7 @@ static void ep1_rx(void)                                /* leaves the packet (NA
 }
 
 #if FELUCCA_OTA
-/* ---- SysEx frames for the main loop (ota.c / editor.c hooks; felucca.c and the
+/* ---- SysEx frames for the main loop (ota.c hooks; felucca.c and the
  * update loader supply ota_now_ms / ota_idle) ---- */
 static uint32_t ota_now_ms(void);
 static void ota_idle(void);

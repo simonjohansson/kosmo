@@ -2,8 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* I2S output (ALNK0 -> external codec) and the
  * audio ISR: per half buffer, blocks of CTL samples: mix_block (fx.c: events ->
- * each synth part -> dist -> level / pan -> sends -> buses -> master) -> USB audio (uac_tap) -> the metronome's
- * click (click.c, the DAC only) -> 24-bit stereo. */
+ * the part -> level / pan -> reverb send -> master) -> USB audio (uac_tap) -> 24-bit stereo. */
 /* registers: hal/fm1_audio.h */
 #define HALF_WORDS (HALF_FRAMES * 2u)
 #define DAC_TICKS 544u            /* TIMER4 ticks per I2S frame (24 MHz / 44,117.6 Hz) */
@@ -17,8 +16,8 @@ static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(4)));
 struct felucca_dbg {
     uint32_t magic, halves, max_us, nested, in_audio, late, timer_irqs, ui_frames;
     uint32_t last_us, cpu_q8, boots;
-    uint32_t stage, page, home;           /* where the main loop is (breadcrumbs) */
-    uint32_t prev_stage, prev_page, prev_home, prev_rst, prev_frames;   /* as found at boot */
+    uint32_t stage;                       /* where the main loop is (breadcrumb) */
+    uint32_t prev_stage, prev_rst, prev_frames;   /* as found at boot */
 } felucca_dbg __attribute__((section(".noinit")));
 static volatile uint32_t audio_halves, audio_max_us;
 static volatile uint32_t t5_nested_ticks;              /* TIMER4 ticks TIMER5 spent nested in this ISR (main.c) */
@@ -31,12 +30,6 @@ static void audio_block(int32_t *out, uint32_t n)       /* mix (fx.c), then Q15 
 #if FELUCCA_UAC
     uac_tap(out, n);                                    /* the USB audio input: the same master output */
 #endif
-    if (fx_usb_fixed)                                   /* USB LEVEL FIXED: USB took the full level, the DAC */
-        usb_fixed_dac(out, n);                          /* (speaker, headphones) gets MASTER's (fx.c) */
-    if (!scope_mix)                                     /* the HOME scope (SCOPE OUT): the music, before the click */
-        for (i = 1; i < n; i += 2u)                     /* (MIX: fx.c mix_block took it) */
-            scope_buf[scope_w++ & (SCOPE_N - 1u)] = (int16_t)out[2u * i];
-    click_render(out, n);                               /* the metronome (click.c): the DAC only, not USB */
     for (i = 0; i < n; i++) {
         out[2u * i] *= 1 << OUT_SHIFT;
         out[2u * i + 1u] *= 1 << OUT_SHIFT;
@@ -115,7 +108,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
 #endif
         for (b = 0; b < HALF_FRAMES; b += CTL) {
 #ifdef FM1_INPUT_LAT
-            kb_out_tick = t0 + (HALF_FRAMES + b) * DAC_TICKS;   /* when this block plays (seq.c kb_lat) */
+            kb_out_tick = t0 + (HALF_FRAMES + b) * DAC_TICKS;   /* when this block plays (input.c kb_lat) */
 #endif
             audio_block(o + 2u * b, CTL);
         }

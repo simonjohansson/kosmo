@@ -5,7 +5,7 @@
  * the mapping is a table with a best guess, overridable by HARDWARE CALIBRATION
  * (hold OCT- and OCT+ while powering on): FELUCCA asks for each label in turn.
  * The learned table lives in .noinit and, with FELUCCA_FLASH, in flash with
- * the settings (project.c); read it back with `fm1t memr` to bake it in. */
+ * the settings (settings_persist.c); read it back with `fm1t memr` to bake it in. */
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC,
        B_OCTDN, B_OCTUP, NB };
 enum { EN_SELECT, EN_ALGO, EN_PRESET, EN_K1, EN_K2, EN_K3, EN_K4, NE };
@@ -71,7 +71,7 @@ static int32_t panel_enc(uint32_t role)
 #define SETTINGS_MAGIC_OLD 0x53455433u          /* "SET3" */
 struct { uint32_t magic, palette, lowcut, zoom; } settings __attribute__((section(".noinit")));
 
-static void settings_save(void);              /* project.c: flash copy (FELUCCA_FLASH) */
+static void settings_save(void);              /* settings_persist.c: flash copy (FELUCCA_FLASH) */
 
 /* HOLD (menu): how long a button is held before its layer opens (ui_input.c). Saved in the settings record's
  * retired bold field as HOLD_TAG | index; any other value there (0 or 1 from older firmware) is the default */
@@ -126,5 +126,4 @@ static void settings_init(void)
         settings.zoom = 0;                     /* (retired: the LEDS setting, settings_persist.c) */
     }
     palette_set(settings.palette);
-    fx_lowcut = (uint8_t)(settings.lowcut % 3u);
 }

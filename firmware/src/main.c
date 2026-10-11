@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FELUCCA boot and main loop. Boot order: WDT first, boot-loop guard, fatal vectors,
+/* KOSMO boot and main loop. Boot order: WDT first, boot-loop guard, fatal vectors,
  * guards; then LCD, input (TIMER5 IRQ, 10 kHz), audio (ALNK0 IRQ). */
 extern uint32_t _data_start[], _data_end[], _data_load[], _bss_start[], _bss_end[];
 extern uint32_t _pool_start[], _pool_end[], _rt_start[], _rt_end[], _rt_load[];
@@ -76,9 +76,8 @@ static void fm1_fault(const fm1_crash_t *c)
     char b[12];
     uint32_t t0;
     fm1_audio_stop();
-    scr_wake_now();                                   /* (MENU > SCREEN OFF: the panel on first) */
     lcd_fill(0, 0, 240, 240, UI_CRASH_BG);            /* fixed, outside the palettes */
-    draw_text_line(0, 8, 240, &AF_M, "FELUCCA CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
+    draw_text_line(0, 8, 240, &AF_M, "KOSMO CRASH", UI_CRASH_INK, UI_CRASH_BG, 1);
     hexs(b, c->vec);
     draw_text_line(10, 40, 220, &AF_M, b, UI_CRASH_INK, UI_CRASH_BG, 0);
     hexs(b, c->pc);
@@ -95,52 +94,36 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
-/* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
-static void felucca_init(void)
+/* power-on: the part with its default sound (TP / the engine's defaults) */
+static void kosmo_init(void)
 {
     uint32_t i;
-    chain_defaults(&chain_config);
     for (i = 0; i < G_COUNT; i++)
         song.g[i] = GP[i].def;
-    undo_depth++;                             /* (no undo copy of the power-on loads) */
-    fm6_init();                               /* every track's FM6 patch: the init voice */
-    for (i = 0; i < NTRK; i++) {
-        track_t *t = &trk[i];
-        track_defaults(t);
-        set_engine_of(t, TRK_DEF[i][0]);
-        apply_preset_to(t, TRK_DEF[i][1]);    /* with its sends */
-        t->engine = t->eng_req;
-        eng_mem_claim(t);                     /* (zeros already: no note can come before) */
-        track_defaults_steps(t);              /* (a sound load never touches them) */
-        if (TRK_DEF[i][2])
-            load_pat16(t, PATTERNS[TRK_DEF[i][2] - 1u].note, PATTERNS[TRK_DEF[i][2] - 1u].flags);
-        pat_sig[i] = steps_sig(t);            /* a default pattern, not the user's */
-        pat_last[i] = TRK_DEF[i][2];
-    }
-    undo_depth--;
-    song.sel = 0;
+    for (i = 0; i < P_E0; i++)
+        trk[0].p[i] = TP[i].def;
+    for (i = 0; i < 8u; i++)
+        trk[0].p[P_E0 + i] = ENGINE->edit[i].def;
     song.master_q12 = 2048;                   /* (the pot's level replaces it before the audio starts: master_boot) */
-    ui.home = 1;
-    ui.force = 1;
 }
 
 /* The power-on LED sweep (1.1, hal/fm1_led_anim.h: a soft light over the keys left to right, then the buttons swell
  * and settle on the glow; ~0.70 s), started before the scan and run by it: nothing waits for it, the splash's 430 ms
  * and the first ~0.27 s of the UI go by under it (the UI's LEDs from its end, or at once on a key or a button down).
  * Every LEDS setting: it is no idle glow; with DIM HI / DIM LO it ends on that glow (and is drawn over that glow
- * level), with OFF / INV dark. Not with MENU > ANIM OFF (no motion: the LEDs as the UI has them at once), not after a crash (a crash record newer than the last boot saw: the crash screen's
+ * level), with OFF / INV dark. Not after a crash (a crash record newer than the last boot saw: the crash screen's
  * reset), a hang (a WDT reset) or a failed boot (bootguard: the last one died within its first 30 s): straight to the
  * UI. The UBOOT paths never get here. */
 static uint32_t crash_seen __attribute__((section(".noinit")));   /* fm1_crash.count at the last boot */
 static uint8_t boot_clean;                    /* no crash, hang (WDT) or failed boot before this one (boot_leds):
-                                               * the sweep runs and the autosave is restored (project.c autosave_boot) */
+                                               * the sweep runs */
 static void boot_leds(void)
 {
     uint32_t crashed = fm1_crash.magic == FM1_CRASH_MAGIC && fm1_crash.count != crash_seen;
     crash_seen = fm1_crash.count;
     boot_clean = !crashed && !bootguard.failed && !(fm1_boot.p3_rst & 4u);
     fm1_led_dim_level(settings_leds == LEDS_DIM_LO);
-    if (boot_clean && !(ui_prefs & PREF_ANIM_OFF))
+    if (boot_clean)
         fm1_led_anim_start(settings_leds == LEDS_DIM || settings_leds == LEDS_DIM_LO);
 }
 
@@ -153,9 +136,8 @@ static void fm1_main(void)
         ota_boot_cleanup();                             /* staging area left by an update */
 #endif
     settings_init();
-    usb_serial_apply();                                 /* (#67: the saved USB SERIAL before usb_start) */
     lcd_init();
-    draw_splash();                                      /* ui_draw.c (1.1.5) */
+    draw_splash();                                      /* ui.c */
     if (felucca_dbg.magic != DBG_MAGIC) {
         memset(&felucca_dbg, 0, sizeof felucca_dbg);
         felucca_dbg.magic = DBG_MAGIC;
@@ -165,16 +147,14 @@ static void fm1_main(void)
     felucca_dbg.in_audio = 0;                       /* .noinit: a reset inside the audio ISR left it set, and
                                                        TIMER5 would treat every tick as nested (no USB poll) */
     felucca_dbg.prev_stage = felucca_dbg.stage;     /* a WDT reset leaves the last breadcrumb here */
-    felucca_dbg.prev_page = felucca_dbg.page;
-    felucca_dbg.prev_home = felucca_dbg.home;
     felucca_dbg.prev_frames = felucca_dbg.ui_frames;
     felucca_dbg.prev_rst = fm1_boot.p3_rst;
     fm1_input_init();
     fm1_adc_init();
     panel_init();
-    felucca_init();
+    kosmo_init();
     master_boot();
-    kb_boot_hold = 1;                         /* #137: no notes from the keys before the UI (seq.c keyboard_block) */
+    kb_boot_hold = 1;                         /* #137: no notes from the keys before the UI (input.c keyboard_block) */
     audio_init();
     usb_start();
 #if FELUCCA_UART
@@ -185,18 +165,11 @@ static void fm1_main(void)
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     fm1_delay_ms(30);
-    if ((fm1_in.buttons & 3u) == 3u) {
-        panel_setup();                        /* OCT- + OCT+ held at power-on */
-        settings_save();
-    }
-    autosave_boot(boot_clean);                /* (1.2) the last session's music, under the splash */
     for (ms = 0; ms < 400u; ms += 10u) {      /* the splash; the pot followed (MIDI IN plays under it) */
         fm1_delay_ms(10);
         master_poll();
     }
     kb_boot_hold = 0;
-    lcd_fill(0, 0, 240, 240, T_BG);
-    scrn.idle = fm1_ms;                        /* (MENU > SCREEN OFF: from here) */
 
     for (;;) {
         uint32_t m = fm1_ms;
@@ -212,27 +185,13 @@ static void fm1_main(void)
                 song.batt_raw = song.batt_raw ? song.batt_raw + (b - song.batt_raw) / 32 : b;
         }
         master_poll();
-        {   /* OCT- + OCT+ held 5 s: enter UBOOT with RAM intact (debug / update); a countdown
-             * shows from 2 s over the whole screen (the menu and the dialogs too: ui_draw), letting
-             * go cancels it */
+        {   /* OCT- + OCT+ held 5 s: enter UBOOT with RAM intact (debug / update); letting go cancels it */
             static uint32_t t0;
             uint32_t both = (1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]);
             if ((fm1_in.buttons & both) != both) {
-                if (ui.uboot) {
-                    ui.uboot = 0;
-                    ui.force = 1;                       /* what the countdown covered */
-                    ui_message("UPDATE CANCELLED");
-                }
                 t0 = fm1_ms;
-            } else if (fm1_ms - t0 > 2000u && fm1_ms - t0 <= 5000u) {
-                uint32_t left = (5000u - (fm1_ms - t0) + 999u) / 1000u;
-                if (left != ui.uboot) {
-                    ui.uboot = (uint8_t)left;
-                    ui.force = 1;
-                }
             } else if (fm1_ms - t0 > 5000u) {
                 fm1_audio_stop();
-                scr_wake_now();
                 lcd_fill(0, 0, 240, 240, T_BG);
                 draw_text_box(0, 110, 240, &AF_M, "UBOOT", T_THEME, 1);
                 usb_detach();
@@ -242,21 +201,17 @@ static void fm1_main(void)
             }
         }
 #if FELUCCA_OTA
-        ed_service();                                   /* web editor SysEx */
         ota_service();                                  /* M-UPGRADE handshake */
         if (usb.ota_req) {                              /* M-UPGRADE upgrade command */
             usb.ota_req = 0;
-            panic_req = (1u << NTRK) - 1u;               /* every track (bit per track) */
-            scr_wake_now();                             /* (its progress on the screen) */
+            midi_all_notes_off(1);
             if (flash_ok)
                 ota_session();                          /* returns only if nothing was committed */
-            lcd_fill(0, 0, 240, 240, T_BG);
-            ui.force = 1;
+            draw_splash();
         }
 #endif
         if (usb.uboot_req) {                            /* SysEx F0 22 24 35 7D F7 from the host */
             fm1_audio_stop();
-            scr_wake_now();
             lcd_fill(0, 0, 240, 240, T_BG);
             draw_text_box(0, 110, 240, &AF_M, "UBOOT (USB)", T_THEME, 1);
             fm1_delay_ms(20);
@@ -265,26 +220,10 @@ static void fm1_main(void)
             bootguard.pending = 0;
             fm1_enter_uboot();
         }
-#if FELUCCA_CDC
-        cdc_task();
-#endif
-        felucca_dbg.ui_frames++;
-        felucca_dbg.page = ui.page;
-        felucca_dbg.home = ui.home;
-        felucca_dbg.stage = 1;
         ui_input();
-        settings_poll();                              /* queued settings save: only while stopped */
-        autosave_poll();                              /* (1.2) the music, stopped and idle: project.c */
-        felucca_dbg.stage = 2;
-        ui_leds();
-        ui_draw();
-        felucca_dbg.stage = 9;
-        while (fm1_ms - m < 15u) {                               /* ~60 UI frames/s at most */
+        settings_poll();                              /* queued settings save */
+        while (fm1_ms - m < 15u)                                 /* ~60 loops/s at most */
             ui_input();
-#if FELUCCA_OTA
-            ed_service();                       /* editor replies without waiting for the next frame */
-#endif
-        }
     }
 }
 

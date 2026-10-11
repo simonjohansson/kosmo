@@ -4,7 +4,7 @@
  * RX DMA into a 128-byte ring, polled from the TIMER5 ISR (no UART IRQ).
  * FELUCCA_UART=0 disables this input. Channel
  * messages go into midi_in_q next to USB, as
- * USB-MIDI packets (cable 0, CIN = status >> 4), so seq.c routes them by channel
+ * USB-MIDI packets (cable 0, CIN = status >> 4), so input.c plays them
  * exactly as USB (CH1-4 or SEL;
  * host tests: midi_uart_test, hostsim TRACKS trs_test);
  * Clock/Start/Continue/Stop retain timestamps and source; other realtime,

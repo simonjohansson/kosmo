@@ -7,7 +7,7 @@
 
 Outputs in build/: kosmo.bin (app), loader/ota.bin (update loader),
 kosmo.fwsc (package). A release build (--release X.Y) writes kosmo-X.Y.fwsc and a folder
-release-X.Y/ with the package, the app, SHA256SUMS, the sample attribution and the licence files.
+release-X.Y/ with the package, the app, SHA256SUMS and the licence files.
 See BUILDING.md for the toolchain and the SDK.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
@@ -91,7 +91,7 @@ def tc_all(*cmds):
 
 
 def generate():
-    """generated headers (UI fonts, icons, keycaps, palettes, tables, samples)"""
+    """generated headers (UI fonts, icons, keycaps, palettes, tables)"""
     GEN.mkdir(parents=True, exist_ok=True)
     for old in ("felucca_font.h", "felucca_icons.h"):     # headers of the bitmap font and icon atlas
         (GEN / old).unlink(missing_ok=True)
@@ -100,9 +100,7 @@ def generate():
             [tools / "gen_aa_icons.py", GEN / "ui_icons.h"],
             [tools / "gen_aa_keycaps.py", GEN / "ui_keycaps.h"],
             [tools / "gen_ui_palettes.py", GEN / "ui_palettes.h"],
-            [tools / "gen_tables.py", GEN / "felucca_tables.h"],
-            [tools / "gen_fm6_patches.py", GEN / "felucca_fm6.h"],
-            [tools / "gen_samples.py", GEN / "felucca_samples.h"]]
+            [tools / "gen_tables.py", GEN / "felucca_tables.h"]]
     procs = [subprocess.Popen([sys.executable, *map(str, c)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) for c in cmds]
     failed = []
@@ -189,7 +187,7 @@ def ld_regions():
 def build_app():
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("FELUCCA_FLASH", "FELUCCA_OTA", "FELUCCA_OTA_DRYRUN", "FELUCCA_OTA_RAMONLY", "FELUCCA_CDC",
-                 "FELUCCA_UART", "FELUCCA_UAC", "FELUCCA_UAC_TONE", "FELUCCA_UAC_48K", "FELUCCA_ICONS", "FELUCCA_SLICE", "FELUCCA_FM4",
+                 "FELUCCA_UART", "FELUCCA_UAC", "FELUCCA_UAC_TONE", "FELUCCA_UAC_48K",
                  "FELUCCA_CDC_DEFAULT", "FELUCCA_UAC_AS_FIRST"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/felucca.c
         if v in ("0", "1"):
@@ -369,9 +367,6 @@ def main():
         raise SystemExit("build: checks failed")
     pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
     (OUT / name).write_bytes(pkg)
-    att = SRC / "assets" / "samples-cc0" / "ATTRIBUTION.txt"
-    if att.exists():
-        shutil.copy(att, OUT / "ATTRIBUTION.txt")
     print(f"app      {OUT / 'kosmo.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")
     print(f"package  {OUT / name}  {len(pkg)} B, identity {PRODUCT}")
@@ -388,8 +383,6 @@ def main():
             shutil.copy(f, rel / "LICENSES" / f.name)
         for doc in ("LICENSE", "LICENSING.md"):
             shutil.copy(SRC / doc, rel / doc)
-        if att.exists():
-            shutil.copy(att, rel / "ATTRIBUTION.txt")
         print(f"release  {rel}/")
     return 0
 

@@ -1,20 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Shared PER4 layout: each feature updates only its own fields, preserving
- * the other feature's saved preferences when either is built independently.
- * PER1/PER2 are upstream; PER3 added bold; PER4 added favorites.
+/* Settings storage: the PER4 record (display palette, LEDS and HOLD codes, the learned panel table), one flash object
+ * (OBJ_SETTINGS). The flash copy wins at boot (the .noinit copies are garbage after a power-off).
+ * lowcut and the favorites block are Felucca's: kept in the record so its layout and size stay, unused here.
  * palette: UI_PAL_TAG + index; an old id (below 20, earlier firmware) is migrated on import.
- * bold: no longer used (one font weight); kept as it was saved, unless it holds the HOLD setting (panel.c).
- * zoom: no longer used (the large readout); kept as it was saved, unless it holds the LEDS setting (panel.c).
- * favorites.factory[15][28..31]: CLICK / CLICK LEVEL / COUNT-IN (1.1), STYLE, MENU's flags, the layers seen (bytes no
- * engine uses; 0 in older settings = every one's default); [15][27]: SCREEN OFF (1.1.5; 0 = 30 MIN, the default);
- * [15][26]: MENU > DISPLAY > HOME (1.3; 0 = SCOPE, 1 TRACKS, 2 LEVELS (1.5), ui.c ui_home_view);
- * [15][24]: MENU's 1.2 flags SCOPE MIX, STEP PREVIEW ON, CHORD ENTRY ADD (bits 0-2, ui.c ui_prefs2; 0 = the defaults);
- * [15][10]: MENU > ANIM IDLE (1.2, Discussion #135, ui.c ui_idle: bit 0; 0 = off, ANIM as its bit in MENU's flags says);
- * [15][11]: PRESETS > LIST's category (1.2, Discussion #90, ui.c ui_lcat: 0 none = ALL / FAV as favorites.filter says);
- * [15][14..23]: the FX layer's key map (1.2, ui_layer.c fx_keys: 16 white keys x 5 bits, perform.c perf_map_of; 0 = the
- * key's default, an unknown code too: kept as saved, a later firmware's effect survives a round trip here).
- * MENU's flags (ui.c PREF_*) are append-only bits whose 0 is the default: BPM LOCK (16) is clear in every older setting
- * = unlocked, LARGE (32) = OFF, RESTORE LAST OFF (128, 1.2) = ON, read as saved (nothing to migrate, so importing twice changes nothing). */
+ * bold: the HOLD setting (panel.c); zoom: the LEDS setting (panel.c). */
 typedef struct {
     uint32_t magic, palette, lowcut, zoom;
     panel_t panel;
@@ -39,20 +28,6 @@ static int settings_import(persist_t *p, int n)
     }
     if (old1 || old2) p->bold = 0;
     if (!current) memset(&p->favorites, 0, sizeof p->favorites);
-    if (p->favorites.factory[15][29] > 1u)        /* STYLE (ui.c ui_style): 2, the retired PIXEL = LINE; unknown = FLAT */
-        p->favorites.factory[15][29] = p->favorites.factory[15][29] == 2u ? 1u : 0u;
-    {   /* CLICK, CLICK LEVEL, COUNT-IN (ui.c ui_rec_prefs): two bits each, 3 is no value: the default (0) */
-        uint32_t b = p->favorites.factory[15][28], f;
-        for (f = 0; f < 3u; f++)
-            if (((b >> (2u * f)) & 3u) == 3u)
-                b &= ~(3u << (2u * f));
-        p->favorites.factory[15][28] = (uint8_t)b;
-    }
-    if (p->favorites.factory[15][27] > 7u)         /* SCREEN OFF (1.1.5, ui.c SCR_CODE): unknown = 0 (NEVER since 1.1.5.1) */
-        p->favorites.factory[15][27] = 0;
-    if (p->favorites.factory[15][11] > 8u)         /* PRESETS LIST's category (1.2, ui.c ui_lcat, CAT_*): unknown = none */
-        p->favorites.factory[15][11] = 0;
-    /* [15][26] HOME (1.3, ui.c ui_home_view): kept as saved; a value this firmware does not know draws SCOPE */
     p->magic = PERSIST_MAGIC;
     p->palette = palette_to_stored(palette_from_stored(p->palette));
     settings.magic = SETTINGS_MAGIC;
@@ -61,25 +36,6 @@ static int settings_import(persist_t *p, int n)
     settings.zoom = p->zoom;
     settings_hold = (uint8_t)hold_from_stored(p->bold);
     settings_leds = (uint8_t)leds_from_stored(p->zoom);
-#ifdef FELUCCA_FAVORITES
-    memcpy(&favorites, &p->favorites, sizeof favorites);
-    favorites.filter = favorites.filter == 1u;
-#if defined(FM4_NPRESETS) && !FELUCCA_FM4
-    {   /* DIGITAL's starred presets (engine 1, retired) -> the FM6 presets that cover them (fm4_convert.c) */
-        uint32_t k;
-        for (k = 0; k < FM4_NPRESETS; k++)
-            if ((favorites.factory[ENGI_DIGITAL][0] >> k) & 1u)
-                favorites.factory[ENGI_FM6][FM4_TO_FM6[k] / 8u] |= (uint8_t)(1u << (FM4_TO_FM6[k] % 8u));
-        memset(favorites.factory[ENGI_DIGITAL], 0, sizeof favorites.factory[ENGI_DIGITAL]);
-    }
-#endif
-#ifdef SMP_SET_PERC
-    if ((favorites.factory[ENGI_SAMPLE][0] >> SMP_SET_PERC) & 1u) {   /* SAMPLE's PERC (preset 4, retired): DRUM's */
-        favorites.factory[ENGI_DRUM][0] |= 1u;                         /* kit (core.h drum_from_perc) */
-        favorites.factory[ENGI_SAMPLE][0] &= (uint8_t)~(1u << SMP_SET_PERC);
-    }
-#endif
-#endif
     if (p->panel.magic == PANEL_MAGIC) panel = p->panel;
     return current ? 1 : 2;
 }
@@ -94,7 +50,50 @@ static void settings_export(persist_t *p)
     p->zoom = settings.zoom = leds_to_stored(settings.zoom, settings_leds);
     p->panel = panel;
     p->bold = hold_to_stored(p->bold, settings_hold);
-#ifdef FELUCCA_FAVORITES
-    memcpy(&p->favorites, &favorites, sizeof favorites);
-#endif
+}
+
+static persist_t persist_saved __attribute__((section(".pool")));
+static uint8_t persist_pending;                 /* 1 requested, 2 waiting after a flash error */
+static uint32_t persist_retry_ms;
+
+static void persist_boot(void)                    /* before settings_init / panel_init */
+{
+    persist_t p;
+    uint32_t f = irq_save();
+    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;       /* the expected 1 MiB part, else stay RAM-only */
+    irq_restore(f);
+    if (!flash_ok)
+        return;
+    fl_plain_window_init();                        /* flash above 0x93000 reads as plaintext through XIP */
+    {
+        int n = st_load(OBJ_SETTINGS, &p, sizeof p);
+        if (settings_import(&p, n))
+            persist_saved = p;
+    }
+}
+
+static void settings_poll(void)
+{
+    persist_t p;
+    if (!persist_pending || !flash_ok || (persist_pending == 2u && (uint32_t)(fm1_ms - persist_retry_ms) < 1000u))
+        return;
+    p = persist_saved;
+    settings_export(&p);
+    if (!memcmp(&p, &persist_saved, sizeof p)) {
+        persist_pending = 0;
+        return;                                    /* unchanged: no erase cycle */
+    }
+    if (st_save(OBJ_SETTINGS, &p, sizeof p) == 0) {
+        persist_saved = p;
+        persist_pending = 0;
+    } else {
+        persist_pending = 2;
+        persist_retry_ms = fm1_ms;
+    }
+}
+
+static void settings_save(void)
+{
+    persist_pending = 1;
+    settings_poll();
 }

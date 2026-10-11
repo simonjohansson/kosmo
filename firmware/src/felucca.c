@@ -1,23 +1,22 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FELUCCA: one compilation unit (the HAL is header-only). Each file uses what the files above it
+/* KOSMO (forked from FELUCCA): one compilation unit (the HAL is header-only). Each file uses what the files above it
  * define, so the order matters. */
 
 /* ---------------------------------------------------- build options --- */
 /* build.py: FELUCCA_<NAME>=0 / 1 in the environment overrides these. Elsewhere: FELUCCA_SLICE, FELUCCA_FM4
- * (core.h: the SLICE engine, the DIGITAL engine), FELUCCA_ICONS (icons.c, the parameter icons; on by default),
  * FELUCCA_OTA_RAMONLY (ota.c). */
 #ifndef FELUCCA_FLASH
-#define FELUCCA_FLASH 1          /* flash driver + storage.c: settings, projects, user presets */
+#define FELUCCA_FLASH 1          /* flash driver + storage.c: the settings */
 #endif
 #ifndef FELUCCA_OTA
-#define FELUCCA_OTA 1            /* M-UPGRADE update entry and the editor SysEx; needs FELUCCA_FLASH */
+#define FELUCCA_OTA 1            /* M-UPGRADE update entry; needs FELUCCA_FLASH */
 #endif
 #ifndef FELUCCA_OTA_DRYRUN
 #define FELUCCA_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
 #endif
 #ifndef FELUCCA_CDC
-#define FELUCCA_CDC 1            /* USB CDC-ACM serial console */
+#define FELUCCA_CDC 0            /* USB CDC-ACM serial console (the console is gone: leave 0) */
 #endif
 #ifndef FELUCCA_UAC
 #define FELUCCA_UAC 1            /* USB audio input: the master output, 16-bit stereo 44.1 kHz (usb.c) */
@@ -32,7 +31,7 @@
 #define FELUCCA_ID "FM-1_900"    /* package identity (build.py: the .fwsc marker string) */
 #endif
 #ifndef FELUCCA_VERSION
-#define FELUCCA_VERSION "v1.5.1" /* shown in the menu, the console and the editor; build.py --release X.Y */
+#define FELUCCA_VERSION "v1.5.1" /* shown on the web emulator page; build.py --release X.Y */
 #endif
 #if FELUCCA_OTA && !FELUCCA_FLASH
 #error "FELUCCA_OTA needs FELUCCA_FLASH"
@@ -58,48 +57,34 @@
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
-#include "engines.c"             /* dsp.c, the eng_*.c files, the factory patterns */
+#include "engines.c"             /* dsp.c, eng_analog.c */
 #include "params.c"
-#include "mod.c"               /* the modulation matrix, used by voice.c and fx.c */
 #include "voice.c"
-#include "slicer.c"              /* per-track SLICER insert, used by fx.c */
 #include "fx.c"
 
-/* ------------------------------------------------- MIDI, sequencer --- */
+/* ------------------------------------------------- MIDI, keys, audio --- */
 #include "usb.c"
 #if FELUCCA_UART
 #include "midi_uart.c"
 #endif
-#include "song_chain.c"
-#include "seq.c"
+#include "input.c"               /* the keys, the MIDI IN queue (midi_control.c) */
 #include "audio.c"
 
 /* -------------------------------------------------------------- UI --- */
 #include "panel.c"
-#include "ui.c"
-#include "menu_items.c"          /* MENU's rows and settings (ui_menu.c, editor_menu.c) */
-#include "icons.c"               /* parameter icons (FELUCCA_ICONS), used by ui_draw.c */
-#include "ui_graph.c"
-#include "ui_draw.c"
-#include "ui_menu.c"
-#include "ui_input.c"
-#include "ui_layer.c"              /* the quick layers (FX GLO SCL EDIT REC held; SEQ TOOLS: ui_tools.c) */
+#include "ui.c"                  /* the placeholder screen, OCT-/OCT+ */
+#include "icons.c"               /* the icon atlas */
 
-/* --------------------------------------------- storage, update, editor --- */
+/* ---------------------------------------------- storage, update --- */
 #if FELUCCA_FLASH
 #include "fm1_flash.h"
 #include "storage_hw.c"
 #include "storage.c"
+#include "settings_persist.c"    /* settings + the learned panel table: one flash object */
 #endif
-#include "upreset.c"             /* user presets (RAM mirror; flash with FELUCCA_FLASH) */
-#include "project.c"
 #if FELUCCA_OTA
 #include "ota.c"
 #include "ota_hw.c"
-#include "editor.c"              /* web editor SysEx (needs the OTA SysEx plumbing) */
-#endif
-#if FELUCCA_CDC
-#include "console.c"
 #endif
 #include "master.c"              /* the MASTER pot (#137: read before the audio starts) */
 #include "main.c"
