@@ -2,12 +2,12 @@
 # the Mac (kernel-counted, ~1 % run to run). The check allows +25 %. Rewritten by BUDGET_UPDATE=1.
 cpu/00_ROBOT_LEAD 758
 cpu/01_CHOIR_PAD 758
-cpu/02_BELLS 756
+cpu/02_BELLS 757
 cpu/03_BUZZ_BASS 758
-cpu/04_ORGAN 756
+cpu/04_ORGAN 757
 cpu/05_ZAP 758
 cpu/filter/BP 783
-cpu/filter/HP 783
+cpu/filter/HP 784
 cpu/filter/NOTCH 790
 cpu/filter/COMB 561
 cpu/fat4 758

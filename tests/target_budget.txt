@@ -1,7 +1,7 @@
 # KOSMO target cost budget (tests/target_budget.py): instructions in the loops of each
 # function in build/kosmo.dis, x4 per nesting level, divides x9. The check allows +10 %.
 # Rewritten by BUDGET_UPDATE=1.
-wave_render 708
-fm1_alnk0_irq 1837
-fm1_timer5_irq 26247
+wave_render 566
+fm1_alnk0_irq 1910
+fm1_timer5_irq 26559
 rev_room 684
