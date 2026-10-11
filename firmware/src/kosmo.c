@@ -16,7 +16,7 @@
 #define KOSMO_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
 #endif
 #ifndef KOSMO_PERF
-#define KOSMO_PERF 0           /* 1: stats over USB CDC once a second (perf.c); needs KOSMO_CDC=1 */
+#define KOSMO_PERF 0           /* 1: stats over USB CDC once a second (perf.c); needs KOSMO_CDC=1. 2: without the clock probe (it reads registers fm1-emulator does not map) */
 #endif
 #ifndef KOSMO_CDC
 #define KOSMO_CDC 0            /* USB CDC-ACM serial console (the console is gone: leave 0) */

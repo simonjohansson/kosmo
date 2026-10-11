@@ -147,7 +147,7 @@ def ldr_wrap(image):
 def build_loader():
     LDR.mkdir(parents=True, exist_ok=True)
     src = FW / "loader"
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src"]
+    flags = [os.environ.get("KOSMO_OPT", "-Os"), *CFLAGS[1:], "-Ifirmware/hal", "-Ifirmware/src"]
     tc_all(("cc", "-c", src / "crt0_ldr.S", "-o", LDR / "crt0_ldr.o"),
            ("cc", *flags, "-c", src / "loader.c", "-o", LDR / "loader.o"))
     elf = LDR / "loader.elf"
@@ -186,12 +186,12 @@ def ld_regions():
 
 
 def build_app():
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
+    flags = [os.environ.get("KOSMO_OPT", "-Os"), *CFLAGS[1:], "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
     for flag in ("KOSMO_FLASH", "KOSMO_OTA", "KOSMO_OTA_DRYRUN", "KOSMO_OTA_RAMONLY", "KOSMO_CDC",
                  "KOSMO_UART", "KOSMO_UAC", "KOSMO_UAC_TONE", "KOSMO_UAC_48K",
                  "KOSMO_CDC_DEFAULT", "KOSMO_UAC_AS_FIRST", "KOSMO_PERF"):
         v = os.environ.get(flag)    # unset: the default in firmware/src/kosmo.c
-        if v in ("0", "1"):
+        if v in ("0", "1") or (flag == "KOSMO_PERF" and v == "2"):
             flags.append(f"-D{flag}={v}")
     v = os.environ.get("KOSMO_USB_LAYOUT")   # firmware/src/usb.c: how the USB composite presents itself (#67), 0..3
     if v in ("0", "1", "2", "3"):

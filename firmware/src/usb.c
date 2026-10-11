@@ -136,7 +136,8 @@ static struct {
 #endif
 
 static struct {
-    uint8_t up, config, pend_addr, has_pend_addr, e0_tx, e0_zlp;
+    volatile uint8_t up;         /* usb_poll (TIMER5 ISR) clears it, the main loop retries on it */
+    uint8_t config, pend_addr, has_pend_addr, e0_tx, e0_zlp;
     const uint8_t *e0_src;
     uint16_t e0_left;
     uint32_t resets, setups, rx_pkts, tx_pkts, sof_seen, timeouts, no_sof;
@@ -391,15 +392,19 @@ static int get_desc(uint32_t wvalue, const uint8_t **d, uint16_t *l)
 }
 
 /* ---------------------------------------------------------- the SIE --- */
+/* A SIE request that is not DONE after 2 ms (TIMER4 ticks, not loop counts: the cost of a loop turn is the
+ * optimiser's) has failed. */
+#define SIE_TIMEOUT_TICKS (2000u * 24u)
 static void sie_wr(uint32_t r, uint32_t v)
 {
-    uint32_t n = 20000;
+    uint32_t t, ok;
     if (!fm1_usb_sie_on())
         return;
     fm1_usb_sie_wr_start(r, v);
-    while (!fm1_usb_sie_done() && --n)
+    t = fm1_usb_ticks();
+    while (!(ok = fm1_usb_sie_done()) && (uint32_t)(fm1_usb_ticks() - t) < SIE_TIMEOUT_TICKS)
         ;
-    if (n)
+    if (ok)
         usb.timeouts = 0;                               /* consecutive failures only */
     else if (++usb.timeouts > 50u)
         usb.up = 0;                                     /* SIE dead (no clock?): stop polling it */
@@ -407,12 +412,13 @@ static void sie_wr(uint32_t r, uint32_t v)
 
 static uint32_t sie_rd(uint32_t r)
 {
-    uint32_t n = 20000;
+    uint32_t t;
     if (!fm1_usb_sie_on())
         return 0;
     fm1_usb_sie_rd_start(r);
+    t = fm1_usb_ticks();
     while (!fm1_usb_sie_done())
-        if (!--n) {
+        if ((uint32_t)(fm1_usb_ticks() - t) >= SIE_TIMEOUT_TICKS) {
             if (++usb.timeouts > 50u)
                 usb.up = 0;
             return 0;

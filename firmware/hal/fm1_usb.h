@@ -31,6 +31,7 @@
 #define FM1_USB_EP4_TADR (*(volatile uint32_t *)0x11838u)
 #define FM1_USB_EP4_RADR (*(volatile uint32_t *)0x1183Cu)
 #define FM1_USB_IO_CON0 (*(volatile uint32_t *)0x51000u)
+#define FM1_USB_T4_CNT (*(volatile uint32_t *)0x10804u)   /* TIMER4, 24 MHz (fm1_time.h), for the SIE timing */
 #define FM1_CLK_CON1 (*(volatile uint32_t *)0x10010u)
 
 FM1_INLINE void fm1_usb_reset(void)
@@ -67,15 +68,27 @@ FM1_INLINE void fm1_usb_off(void)
 
 /* SIE access through CON1: only while CON0.bit2 (USB_NRST) is set */
 FM1_INLINE uint32_t fm1_usb_sie_on(void) { return FM1_USB_CON0 & 4u; }
+/* The previous request's DONE (and data) stay readable until the SIE takes the new one: polling right after the
+ * write can return them. -Os happened to spend enough cycles between the write and the first poll, -O2 does not
+ * (the USB host path died on the device); wait 6 TIMER4 ticks (0.25 us) so it holds at any -O level. */
+FM1_INLINE uint32_t fm1_usb_ticks(void) { return FM1_USB_T4_CNT; }
+FM1_INLINE void fm1_usb_sie_settle(void)
+{
+    uint32_t t = FM1_USB_T4_CNT;
+    while ((uint32_t)(FM1_USB_T4_CNT - t) < 6u)
+        ;
+}
 FM1_INLINE void fm1_usb_sie_wr_start(uint32_t r, uint32_t v)
 {
     FM1_USB_CON1 = ((r << 8) & 0xFFFF00u) | (v & 0xFFu);
     __asm__ volatile("csync" ::: "memory");
+    fm1_usb_sie_settle();
 }
 FM1_INLINE void fm1_usb_sie_rd_start(uint32_t r)
 {
     FM1_USB_CON1 = ((r << 8) & 0xFFBF00u) | 0x4000u;
     __asm__ volatile("csync" ::: "memory");
+    fm1_usb_sie_settle();
 }
 FM1_INLINE uint32_t fm1_usb_sie_done(void) { return FM1_USB_CON1 & 0x8000u; }
 FM1_INLINE uint32_t fm1_usb_sie_data(void) { return FM1_USB_CON1 & 0xFFu; }

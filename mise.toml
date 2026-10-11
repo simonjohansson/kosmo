@@ -46,6 +46,11 @@ run = 'CC="$(mise which clang)" tests/run_tests.sh'
 description = "Boot build/kosmo.bin in fm1-emulator (set FM1_EMULATOR)"
 run = "tools/emu_smoke.sh"
 
+[tasks.usb-check]
+description = "CDC console must answer in fm1-emulator at -Os and -O2 (builds both, then rebuilds the default)"
+depends = ["setup"]
+run = "tools/usb_check.sh"
+
 [tasks.web]
 description = "Build the browser emulator (web/emu/build.sh; needs a prior build)"
 # Task-scoped: emsdk's install dir has a `docker` folder that would shadow the docker CLI on PATH.

@@ -63,7 +63,7 @@ static void perf_service(void)                 /* main loop */
     pf_kv("pool", (uint32_t)(_pool_end) - (uint32_t)(_pool_start));
     pf_kv("nest", felucca_dbg.nested);
     pf_flush();
-    if (seq % 5u == 1u) {                       /* clock registers and a CPU speed probe, every 5 s */
+    if (KOSMO_PERF == 1 && seq % 5u == 1u) {                       /* clock registers and a CPU speed probe, every 5 s */
         fm1_perf_clk(r);
         pf_s("C");
         pf_kv("sysdiv", r[0]); pf_kv("c0", r[1]); pf_kv("c1", r[2]); pf_kv("c2", r[3]); pf_kv("c3", r[4]);
