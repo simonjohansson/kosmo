@@ -2,12 +2,9 @@
 /* The kids' UI: four pages, one function button each (its LED is lit while the page shows):
  *   HOME WAVE (wave, scan) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX SPACE (amount, size)
  * K1..K4 turn the bars at the bottom. OCT-/OCT+ shift the keys (both together: back to the middle).
- * One bright colour per page, a big picture in the middle. No framebuffer: the screen is drawn in two 240 x 120
+ * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in two 240 x 120
  * strips (cv_oy shifts screen coordinates into the strip) and only when something it shows has changed. */
 
-#define INK RGB(40, 28, 80)
-#define WHITE RGB(255, 255, 255)
-#define NIGHT RGB(8, 6, 28)         /* the sky behind every page but WAVE (pure black, a CRT) */
 #define PX 10                       /* the picture's panel */
 #define PY 40
 #define PW 220
@@ -16,16 +13,16 @@
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[4] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4}}},
-    {B_EDIT, "FILTER", RGB(70, 220, 170), {{0, &trk[0].p[P_FTYPE], 3, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
+    {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 3, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
-    {B_ENV, "ENV", RGB(255, 130, 160), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
+    {B_ENV, "ENV", RGB(60, 230, 255), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
                                         {"Sustain", &trk[0].p[P_SUS], 127, 4}, {"Release", &trk[0].p[P_REL], 127, 4}}},
-    {B_FX, "SPACE", RGB(130, 175, 255), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
+    {B_FX, "SPACE", RGB(255, 80, 200), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
 };
 static const char *const FT_NAME[4] = {"LP", "BP", "HP", "NOTCH"};
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
-static int16_t ui_sig[8] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
+static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
 static uint32_t ui_last, ui_ring;           /* last redraw (ms), ring animation step */
 static int8_t ui_led = -1;
 
@@ -52,48 +49,59 @@ static void disc(int32_t cx, int32_t cy, int32_t r, int32_t t, uint16_t c)
     }
 }
 
-/* a few fixed stars: x, y, brightness (0..255 grey) */
-static const uint8_t STARS[][3] = {{14, 10, 200}, {60, 28, 120}, {110, 8, 255}, {150, 24, 140}, {200, 6, 180},
-    {228, 30, 110}, {6, 120, 130}, {232, 100, 200}, {4, 160, 255}, {236, 150, 120}, {30, 216, 160}, {96, 226, 255},
-    {140, 228, 110}, {190, 222, 190}, {226, 230, 140}, {80, 34, 90}, {170, 4, 100}, {8, 70, 170}, {234, 64, 255}};
-
 /* ------------------------------------------------------- pictures --- */
-static int16_t wy[128];
+static int16_t pt[200][2];                  /* a glowing line's points (WAVE's are filled once for both strips) */
+
+/* a phosphor line through n points: a wide dim halo, a narrower one, then the bright core (pass by pass, so cores stay on top) */
+static void glow_pts(int32_t n, uint16_t c)
+{
+    static const uint8_t T[3] = {9, 6, 3}, M[3] = {22, 50, 100};
+    int32_t i, j;
+    for (j = 0; j < 3; j++)
+        for (i = 0; i < n - 1; i++)
+            cv_line_t(pt[i][0], pt[i][1], pt[i + 1][0], pt[i + 1][1], ux_mix(0, c, M[j]), T[j]);
+}
+static void glow_box(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
+{
+    static const uint8_t T[3] = {9, 6, 3}, M[3] = {22, 50, 100};
+    int32_t j, t;
+    for (j = 0; j < 3; j++) {
+        t = T[j];
+        cv_rect(x - t / 2, y - t / 2, w + t, t, ux_mix(0, c, M[j]));
+        cv_rect(x - t / 2, y + h - t / 2, w + t, t, ux_mix(0, c, M[j]));
+        cv_rect(x - t / 2, y - t / 2, t, h + t, ux_mix(0, c, M[j]));
+        cv_rect(x + w - t / 2, y - t / 2, t, h + t, ux_mix(0, c, M[j]));
+    }
+}
+static void graticule(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
+{
+    int32_t i, g = ux_mix(0, c, 20);
+    cv_frame(x, y, w, h, g);
+    cv_rect(x, y + h / 2, w, 1, g);
+    for (i = 1; i < 10; i++)
+        cv_rect(x + i * w / 10, y, 1, h, g);
+}
 
 static void pic_wave(void)
 {
-    static const uint16_t C[3] = {RGB(0, 60, 24), RGB(0, 130, 54), RGB(120, 255, 140)};   /* halo, halo, core */
-    static const uint8_t T[3] = {9, 6, 3};
-    int32_t i, j, mid = PY + PH / 2, g = RGB(0, 50, 22);
-    cv_frame(PX, PY, PW, PH, g);                          /* graticule */
-    cv_rect(PX, mid, PW, 1, g);
-    for (i = 1; i < 10; i++)
-        cv_rect(PX + i * PW / 10, PY, 1, PH, g);
-    for (j = 0; j < 3; j++)
-        for (i = 0; i < 127; i++)
-            cv_line_t(PX + 10 + i * 200 / 127, wy[i], PX + 10 + (i + 1) * 200 / 127, wy[i + 1], C[j], T[j]);
+    glow_pts(128, PG[0].bg);
 }
 
 static void pic_env(void)
 {
-    static const uint16_t C[4] = {RGB(255, 90, 90), RGB(255, 170, 40), RGB(70, 200, 100), RGB(80, 140, 255)};
     static const char L[4] = {'A', 'D', 'S', 'R'};
-    int32_t base = PY + 106, H = 90, top = base - H, sy = base - trk[0].p[P_SUS] * H / 127;
+    int32_t base = PY + 106, H = 90, sy = base - trk[0].p[P_SUS] * H / 127, i;
     int32_t w[4] = {4 + trk[0].p[P_ATK] * 35 / 100, 4 + trk[0].p[P_DEC] * 35 / 100, 36, 4 + trk[0].p[P_REL] * 35 / 100};
-    int32_t x = PX + (PW - w[0] - w[1] - w[2] - w[3]) / 2, py = base, i, j;
+    int32_t x = PX + (PW - w[0] - w[1] - w[2] - w[3]) / 2, y[5] = {base, base - H, sy, sy, base};
+    for (i = 0; i < 5; i++) {
+        pt[i][0] = (int16_t)x;
+        pt[i][1] = (int16_t)y[i];
+        x += i < 4 ? w[i] : 0;
+    }
+    glow_pts(5, PG[2].bg);
     for (i = 0; i < 4; i++) {
-        for (j = 0; j < w[i]; j++, x++) {
-            int32_t y = i == 0 ? base - j * H / w[0] : i == 1 ? top + j * (sy - top) / w[1] :
-                        i == 2 ? sy : sy + j * (base - sy) / w[3];
-            int32_t a = py < y ? py : y, b = py < y ? y : py;
-            cv_rect(x, y, 1, base - y, C[i]);
-            cv_rect(x, a - 1, 1, b - a + 3, INK);
-            py = y;
-        }
-        {
-            char s[2] = {L[i], 0};
-            cv_text(x - w[i] / 2 - text_w(&AF_S, s) / 2, base + 3, &AF_S, s, INK);
-        }
+        char s[2] = {L[i], 0};
+        cv_text((pt[i][0] + pt[i + 1][0] - text_w(&AF_S, s)) / 2, base + 8, &AF_S, s, PG[2].bg);
     }
 }
 
@@ -110,71 +118,32 @@ static int32_t fgain(int32_t type, int32_t x, int32_t fc, int32_t reso)
     return g + (ad < 14 ? reso * 16 / 127 * (14 - ad) / 14 : 0);
 }
 
-static void face(int32_t cx, int32_t cy, int32_t type)
-{
-    if (type == 0) {                                          /* LP: bear */
-        disc(cx - 19, cy - 16, 9, 0, RGB(140, 85, 45));
-        disc(cx + 19, cy - 16, 9, 0, RGB(140, 85, 45));
-        disc(cx, cy, 22, 0, RGB(170, 105, 60));
-        disc(cx, cy + 8, 10, 0, RGB(240, 205, 160));
-        disc(cx, cy + 4, 3, 0, INK);
-        disc(cx - 9, cy - 6, 3, 0, INK);
-        disc(cx + 9, cy - 6, 3, 0, INK);
-    } else if (type == 1) {                                   /* BP: bee */
-        disc(cx - 14, cy - 18, 11, 0, RGB(200, 235, 255));
-        disc(cx + 14, cy - 18, 11, 0, RGB(200, 235, 255));
-        disc(cx, cy + 2, 22, 0, RGB(255, 215, 30));
-        cv_rect(cx - 21, cy + 4, 42, 5, INK);
-        cv_rect(cx - 17, cy + 14, 34, 5, INK);
-        disc(cx - 8, cy - 8, 4, 0, WHITE);
-        disc(cx + 8, cy - 8, 4, 0, WHITE);
-        disc(cx - 8, cy - 8, 2, 0, INK);
-        disc(cx + 8, cy - 8, 2, 0, INK);
-    } else if (type == 2) {                                   /* HP: bird */
-        cv_rect(cx - 4, cy - 30, 3, 10, RGB(60, 110, 230));
-        cv_rect(cx + 2, cy - 28, 3, 8, RGB(60, 110, 230));
-        disc(cx, cy, 22, 0, RGB(70, 130, 245));
-        disc(cx - 14, cy + 6, 9, 0, RGB(40, 90, 200));
-        disc(cx + 8, cy - 7, 6, 0, WHITE);
-        disc(cx + 9, cy - 7, 3, 0, INK);
-        cv_line_t(cx + 18, cy, cx + 34, cy + 5, RGB(255, 150, 30), 5);
-    } else {                                                  /* NOTCH: ghost */
-        disc(cx, cy - 4, 22, 0, WHITE);
-        cv_rect(cx - 22, cy - 4, 45, 24, WHITE);
-        disc(cx - 15, cy + 20, 7, 0, WHITE);
-        disc(cx, cy + 20, 7, 0, WHITE);
-        disc(cx + 15, cy + 20, 7, 0, WHITE);
-        disc(cx - 8, cy - 8, 4, 0, INK);
-        disc(cx + 8, cy - 8, 4, 0, INK);
-        disc(cx, cy + 6, 4, 0, INK);
-    }
-}
-
 static void pic_filter(void)
 {
-    int32_t x, base = PY + PH - 6, fc = 20 + trk[0].p[P_E2] * 160 / 127, py = 0, ty = trk[0].p[P_FTYPE] & 3;
+    int32_t x, base = PY + PH - 12, fc = 20 + trk[0].p[P_E2] * 160 / 127;
     for (x = 0; x < 200; x++) {
-        int32_t y = base - fgain(ty, x, fc, trk[0].p[P_E3]), a = x ? (py < y ? py : y) : y, b = x ? (py < y ? y : py) : y;
-        cv_rect(PX + 10 + x, y, 1, base - y, RGB(190, 245, 225));
-        cv_rect(PX + 10 + x, a - 1, 1, b - a + 3, RGB(0, 150, 110));
-        py = y;
+        pt[x][0] = (int16_t)(PX + 10 + x);
+        pt[x][1] = (int16_t)(base - fgain(trk[0].p[P_FTYPE] & 3, x, fc, trk[0].p[P_E3]));
     }
-    face(PX + PW / 2, PY + 36, ty);
+    glow_pts(200, PG[1].bg);
 }
 
 static void pic_space(void)
 {
     int32_t sz = song.g[G_RSIZE], w = 60 + sz * 150 / 127, h = 40 + sz * 70 / 127, cx = PX + PW / 2, cy = PY + PH / 2;
     int32_t maxr = h / 2 - 4, i, r;
-    cv_rrect(cx - w / 2, cy - h / 2, w, h, 8, INK, WHITE);
-    cv_rrect(cx - w / 2 + 4, cy - h / 2 + 4, w - 8, h - 8, 6, RGB(255, 245, 200), INK);
+    uint16_t c = PG[3].bg, d = ux_mix(0, c, 40);
+    glow_box(cx - w / 2, cy - h / 2, w, h, c);
     if (ui_ring)
         for (i = 0; i < 3; i++) {
             r = (int32_t)((ui_ring * 3 + (uint32_t)i * (uint32_t)maxr / 3u) % (uint32_t)maxr);
-            if (r > 3)
-                disc(cx, cy, r, 3, RGB(80 + 50 * i, 140, 255));
+            if (r > 5) {
+                disc(cx, cy, r + 2, 7, d);
+                disc(cx, cy, r, 3, c);
+            }
         }
-    disc(cx, cy, 6, 0, RGB(235, 60, 130));
+    disc(cx, cy, 8, 0, d);
+    disc(cx, cy, 5, 0, c);
 }
 
 static void banner(void)
@@ -183,47 +152,33 @@ static void banner(void)
     char s[8] = "1 / 8";
     int32_t w = text_w(&AF_L, n) + 24, x = (240 - w) / 2;
     s[0] = (char)('1' + ui_preset);
-    cv_rrect(x, 78, w, 74, 12, INK, ux_mix(PG[ui_page].bg, WHITE, 75));
-    cv_rrect(x + 3, 81, w - 6, 68, 10, WHITE, INK);
-    cv_text(x + 12, 90, &AF_L, n, INK);
-    cv_text(120 - text_w(&AF_M, s) / 2, 124, &AF_M, s, INK);
+    cv_rect(x, 78, w, 74, 0);
+    graticule(x, 78, w, 74, PG[0].bg);
+    glow_box(x + 4, 82, w - 8, 66, PG[0].bg);
+    cv_text(x + 12, 90, &AF_L, n, PG[0].bg);
+    cv_text(120 - text_w(&AF_M, s) / 2, 124, &AF_M, s, PG[0].bg);
 }
 
 /* ---------------------------------------------------------- page --- */
 static void scene(void)
 {
-    uint16_t bg = PG[ui_page].bg, sky = ui_page ? NIGHT : 0, track = ux_mix(bg, sky, 80);
-    int32_t n = 0, i, gap = 6, bw, oct = song.octave, ty = trk[0].p[P_FTYPE] & 3;
-    char s[8] = "OCT +0";
+    uint16_t bg = PG[ui_page].bg, track = ux_mix(0, bg, 20);
+    int32_t n = 0, i, gap = 6, bw, ty = trk[0].p[P_FTYPE] & 3;
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
     while (n < 4 && PG[ui_page].k[n].v)
         n++;
-    for (i = 0; ui_page && i < (int32_t)(sizeof STARS / sizeof STARS[0]); i++) {
-        uint32_t b = STARS[i][2];
-        cv_pset(STARS[i][0], STARS[i][1], RGB(b, b, b));
-        if (b > 240) {                                    /* the brightest twinkle as a plus */
-            cv_pset(STARS[i][0] - 1, STARS[i][1], RGB(90, 90, 120));
-            cv_pset(STARS[i][0] + 1, STARS[i][1], RGB(90, 90, 120));
-            cv_pset(STARS[i][0], STARS[i][1] - 1, RGB(90, 90, 120));
-            cv_pset(STARS[i][0], STARS[i][1] + 1, RGB(90, 90, 120));
-        }
-    }
     cv_text(12, 4, &AF_L, title, bg);
-    s[4] = oct < 0 ? '-' : '+';
-    s[5] = (char)('0' + (oct < 0 ? -oct : oct));
-    cv_text_r(232, 12, &AF_M, s, WHITE, sky);
-    if (ui_page)
-        cv_rrect(PX, PY, PW, PH, 10, ux_mix(bg, WHITE, 75), bg);
+    graticule(PX, PY, PW, PH, bg);
     (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : pic_space)();
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
         const kn_t *k = &PG[ui_page].k[i];
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
         const char *name = k->name ? k->name : FT_NAME[ty];
-        cv_rrect(x, 170, bw, 38, 8, track, sky);
+        cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
-        cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, WHITE);
+        cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, bg);
     }
     if (ui_banner)
         banner();
@@ -237,10 +192,12 @@ static void ui_draw(void)
         ux.mono = 0;
         ux.gen++;
     }
-    for (i = 0; i < 128; i++)                  /* the scanned frame, once for both strips */
-        wy[i] = (int16_t)(PY + PH / 2 - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2) * 46) >> 15));
+    for (i = 0; !ui_page && i < 128; i++) {   /* the scanned frame, once for both strips */
+        pt[i][0] = (int16_t)(PX + 10 + i * 200 / 127);
+        pt[i][1] = (int16_t)(PY + PH / 2 - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2) * 46) >> 15));
+    }
     for (y0 = 0; y0 < 240u; y0 += 120u) {
-        cv_begin(240, 120, ui_page ? NIGHT : 0);
+        cv_begin(240, 120, 0);
         cv_oy = -(int32_t)y0;
         scene();
         cv_oy = 0;
@@ -259,7 +216,7 @@ static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), i, active = 0;
     uint32_t dn = 1u << panel.btn[B_OCTDN], up = 1u << panel.btn[B_OCTUP];
-    int16_t sig[8] = {0};
+    int16_t sig[7] = {0};
     int32_t pst;
     if ((pressed & (dn | up)) && (fm1_in.buttons & (dn | up)) == (dn | up))
         song.octave = 0;
@@ -300,9 +257,8 @@ static void ui_input(void)
     sig[0] = (int16_t)ui_page;
     for (i = 0; i < 4u; i++)
         sig[1 + i] = PG[ui_page].k[i].v ? *PG[ui_page].k[i].v : 0;
-    sig[5] = song.octave;
-    sig[6] = (int16_t)ui_ring;
-    sig[7] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
+    sig[5] = (int16_t)ui_ring;
+    sig[6] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
     if (!memcmp(sig, ui_sig, sizeof sig) || fm1_ms - ui_last < 40u)
         return;
     memcpy(ui_sig, sig, sizeof sig);
