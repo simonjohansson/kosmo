@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Effects: the part's level / pan, ECHO (echo.c), the SPACE reverb send (space.c), then the master: DC blocker, peak limiter, soft clip.
- * Mono reverb send, stereo dry mix and stereo reverb return. */
+ * Stereo end to end: voices (copies spread L / R), ECHO, SPACE sends, dry mix and reverb return. */
 /* master: peak limiter in front of the soft clipper. Fast attack (~0.1 ms),
  * ~150 ms release, threshold where tanh is still nearly linear, so chords
  * get quieter instead of crushed. */
@@ -47,8 +47,8 @@ static inline void master_out(int32_t *l, int32_t *r)
 }
 
 static void events_block(uint32_t n);                    /* input.c */
-static int32_t part_buf[CTL];                            /* the part's block (mix_part) */
-static int32_t send_r[CTL], wet_l[CTL], wet_r[CTL], mix_l[CTL], mix_r[CTL];
+static int32_t part_buf[3 * CTL];                        /* the part's block (mix_part): centre, left copies, right copies */
+static int32_t send_l[CTL], send_r[CTL], wet_l[CTL], wet_r[CTL], mix_l[CTL], mix_r[CTL];
 #include "echo.c"
 #include "space.c"
 
@@ -57,7 +57,7 @@ static void mix_part(track_t *t, uint32_t n)
 {
     int32_t *b = part_buf;
     uint32_t i;
-    int32_t lvl, pan, gl, gr, r, xmax;
+    int32_t lvl, pan, gl, gr, r, xmax, w;
     if (!track_render(t, b, n))
         return;
     lvl = LEVEL_Q12[t->p[P_LEVEL] & 127];
@@ -66,12 +66,24 @@ static void mix_part(track_t *t, uint32_t n)
     gr = 4096 + (pan < 0 ? pan * 64 : 0);
     r = t->p[P_REV] * 258;
     xmax = 0x7FFFFFFF / (r | 1);                        /* sends: loud chords at a high LEVEL */
+    w = t->p[P_DETUNE] * 32;                            /* the copies' width grows with DETUNE; the L+R sum stays */
     for (i = 0; i < n; i++) {
         int32_t x = ((b[i] >> 2) * lvl) >> 10;          /* pre-shift: 8 loud voices */
-        if (r)
-            send_r[i] += mulq15(clamp(x, -xmax, xmax), r);   /* (mulq15 would overflow unclamped) */
-        mix_l[i] += (x * gl) >> 12;
-        mix_r[i] += (x * gr) >> 12;
+        int32_t xl = x, xr = x;
+        if (tr_side) {                                  /* x: all voices, d: left copies minus right copies */
+            int32_t bl = b[n + i], br = b[2u * n + i], d = (((bl - br) >> 2) * lvl >> 10) * w >> 12;
+            x = (((b[i] + bl + br) >> 2) * lvl) >> 10;
+            xl = x + d;
+            xr = x - d;
+        }
+        xl = (xl * gl) >> 12;
+        xr = (xr * gr) >> 12;
+        if (r) {
+            send_l[i] += mulq15(clamp(xl, -xmax, xmax), r);   /* (mulq15 would overflow unclamped) */
+            send_r[i] += mulq15(clamp(xr, -xmax, xmax), r);
+        }
+        mix_l[i] += xl;
+        mix_r[i] += xr;
     }
 }
 
@@ -80,12 +92,12 @@ static void mix_block(int32_t *out, uint32_t n)
     uint32_t i;
     int32_t mg = (int32_t)song.master_q12;
     for (i = 0; i < n; i++) {
-        send_r[i] = mix_l[i] = mix_r[i] = 0;
+        send_l[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
     }
     PFX(0, events_block(n));
     PFX(1, mix_part(&trk[0], n));
     PFX(6, echo_block(n));                              /* before SPACE: the send hears the echoes */
-    PFX(3, space_block(send_r, wet_l, wet_r, n));
+    PFX(3, space_block(send_l, send_r, wet_l, wet_r, n));
 #if KOSMO_PERF
     uint32_t _t4 = fm1_ticks();
 #endif

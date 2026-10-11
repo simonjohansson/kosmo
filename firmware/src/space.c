@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* SPACE (issue #21, 8 lines and a per-program tank rate: issue #27): an 80s digital studio reverb, written from the published
- * topologies (Schroeder allpass diffusers, Jot's feedback delay network with a Hadamard mix); no code borrowed. Stereo out
- * of a mono send (the voices and ECHO's pair summed into send_r), AMOUNT is the send, the dry mix always passes.
+ * topologies (Schroeder allpass diffusers, Jot's feedback delay network with a Hadamard mix); no code borrowed. Stereo in and out:
+ * the send is a pair (send_l / send_r), L goes into the even lines (the left output taps) and R into the odd (issue #26), AMOUNT is the send, the dry mix always passes.
  *
  * Vintage on purpose: the input is averaged over two samples (a low pass), soft clipped (tanh) and taken at the program's
  * tank clock (22 kHz dark / vintage, up to 32 kHz for the clean programs), diffused by three allpasses and fed to eight
@@ -37,10 +37,10 @@ static const sp_prog_t SP_PROG[SP_NPROG] = {
 static const uint16_t SP_LEN[SP_L] = {739, 743, 881, 941, 1129, 1319, 1657, 1997};   /* the longest line, samples at 22 kHz (mutually odd-ish) */
 static const uint16_t SP_APL[3] = {113, 181, 241};
 static int16_t sp_line[SP_L][SP_N] __attribute__((section(".pool")));
-static int16_t sp_ap[3][SP_AN] __attribute__((section(".pool")));
+static int16_t sp_ap[2][3][SP_AN] __attribute__((section(".pool")));
 static struct {
     uint32_t wr, aw, acc, ph[SP_L];
-    int32_t dl[SP_L], cur[SP_L], lp[SP_L], el[SP_L], ef[SP_L], pl, pr, cl, cr, xp, gate, hold;   /* el, ef: the remainders of the damper and the feedback product; pl.. the last two tank outputs */
+    int32_t dl[SP_L], cur[SP_L], lp[SP_L], el[SP_L], ef[SP_L], pl, pr, cl, cr, xp, xq, gate, hold;   /* el, ef: the remainders of the damper and the feedback product; pl.. the last two tank outputs */
 } sp;
 
 static void space_clear(void)
@@ -52,11 +52,11 @@ static void space_clear(void)
         sp.lp[k] = sp.dl[k] = sp.cur[k] = sp.el[k] = sp.ef[k] = 0;
         sp.ph[k] = k * 0x20000000u;
     }
-    for (k = 0; k < 3u; k++)
+    for (k = 0; k < 6u; k++)
         for (i = 0; i < SP_AN; i++)
-            sp_ap[k][i] = 0;
+            sp_ap[k / 3u][k % 3u][i] = 0;
     sp.wr = sp.aw = sp.acc = 0;
-    sp.pl = sp.pr = sp.cl = sp.cr = sp.xp = sp.gate = sp.hold = 0;
+    sp.pl = sp.pr = sp.cl = sp.cr = sp.xp = sp.xq = sp.gate = sp.hold = 0;
 }
 
 /* a Q15 product rounded toward zero: floor leaves a bias that keeps a limit cycle alive (and DC) in the tank, long after the sound */
@@ -74,7 +74,7 @@ static inline int32_t sp_allpass(int16_t *b, uint32_t w, uint32_t len, int32_t x
     return d - sp_mul(v, g);
 }
 
-static __attribute__((noinline)) void space_block(const int32_t *in, int32_t *wl, int32_t *wr, uint32_t n)
+static __attribute__((noinline)) void space_block(const int32_t *inl, const int32_t *inr, int32_t *wl, int32_t *wr, uint32_t n)
 {
     const sp_prog_t *p = &SP_PROG[clamp(song.g[G_RPROG], 0, SP_NPROG - 1)];
     int32_t sc = p->lo + (p->hi - p->lo) * song.g[G_RSIZE] / 127;
@@ -98,22 +98,27 @@ static __attribute__((noinline)) void space_block(const int32_t *in, int32_t *wl
             sp.cur[k] = e;
     }
     for (i = 0; i < (int32_t)n; i++) {
-        int32_t x = softclip((in[i] + sp.xp) >> 1);
-        sp.xp = in[i];
+        int32_t xl = softclip((inl[i] + sp.xp) >> 1), xr = softclip((inr[i] + sp.xq) >> 1);
+        sp.xp = inl[i];
+        sp.xq = inr[i];
         sp.acc += (uint32_t)clk;
         if (sp.acc >= 65536u) {                        /* a tank step */
-            int32_t y[SP_L], h[SP_L], b[SP_L], ol, or_, g = p->g;
+            int32_t y[SP_L], h[SP_L], b[SP_L], ol, or_, g = p->g, x;
             uint32_t w = sp.wr, aw = sp.aw;
             sp.acc -= 65536u;
             if (hold) {                                    /* GATED: open while the input is, and HOLD after it */
-                int32_t ax = x < 0 ? -x : x;
+                int32_t ax = xl < 0 ? -xl : xl, bx = xr < 0 ? -xr : xr;
+                ax = ax > bx ? ax : bx;
                 sp.hold = ax > 120 ? hold : sp.hold > 0 ? sp.hold - 1 : 0;
                 sp.gate += ((sp.hold ? 32767 : 0) - sp.gate) >> (sp.hold ? 6 : 9);
                 g = 8000 + mulq15(g - 8000, sp.gate);       /* shut: the tank rings out quickly */
             }
-            x = sp_allpass(sp_ap[0], aw, apl[0], x >> 2, ga);
-            x = sp_allpass(sp_ap[1], aw, apl[1], x, ga);
-            x = sp_allpass(sp_ap[2], aw, apl[2], x, ga);
+            xl = sp_allpass(sp_ap[0][0], aw, apl[0], xl >> 2, ga);
+            xl = sp_allpass(sp_ap[0][1], aw, apl[1], xl, ga);
+            xl = sp_allpass(sp_ap[0][2], aw, apl[2], xl, ga);
+            xr = sp_allpass(sp_ap[1][0], aw, apl[0], xr >> 2, ga);
+            xr = sp_allpass(sp_ap[1][1], aw, apl[1], xr, ga);
+            xr = sp_allpass(sp_ap[1][2], aw, apl[2], xr, ga);
             sp.aw = (aw + 1u) & (SP_AN - 1u);
             for (k = 0; k < SP_L; k++) {
                 int32_t m, o, f, q;
@@ -144,6 +149,7 @@ static __attribute__((noinline)) void space_block(const int32_t *in, int32_t *wl
             g = (g * 11585 >> 15) >> 1;                    /* 1/sqrt 8 of the Hadamard, and a Q14 product below so the sums keep 32 bits */
             for (k = 0; k < SP_L; k++) {
                 int32_t m = h[k] * g + sp.ef[k];
+                x = k & 1 ? xr : xl;                      /* L into the lines of the left taps (even), R into the right (odd) */
                 sp.ef[k] = m & 16383;
                 sp_line[k][w & (SP_N - 1u)] = (int16_t)clamp((m >> 14) + (k & 1 ? -x : x), -32767, 32767);
             }

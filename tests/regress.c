@@ -814,7 +814,7 @@ static void space_run(int p, int size, int tone, int noise_ms)
             seed = seed * 1664525u + 1013904223u;
             in[i] = noise_ms ? (f + i < (uint32_t)noise_ms * 44u ? (int32_t)(seed >> 17) - 16384 : 0) : (f + i == 0 ? 20000 : 0);
         }
-        space_block(in, sp_y + f, wr_, CTL);
+        space_block(in, in, sp_y + f, wr_, CTL);
     }
 }
 
@@ -1057,7 +1057,7 @@ static void echo_run(uint32_t blocks, int32_t (*in)(uint32_t pos))
         for (i = 0; i < CTL; i++) {
             int32_t x = in(b * CTL + i);
             mix_l[i] = mix_r[i] = x;
-            send_r[i] = 0;
+            send_l[i] = send_r[i] = 0;
             if (i == CTL - 1u) {
                 echo_block(CTL);
                 memcpy(&ec_out[0][b * CTL], mix_l, sizeof mix_l);
@@ -1110,6 +1110,95 @@ static int chk_echo_decay(char *msg, uint32_t n)
              off_bad, pk[0], pk[1], pk[2], hf[0], hf[1], hf[2]);
     return !off_bad && pk[0] > 5000 && pk[1] < pk[0] && pk[2] < pk[1] && pk[2] > 100 && hf[2] < hf[1] && hf[1] < hf[0];
 }
+/* #26: FAT copies spread over L / R with DETUNE; the L+R sum keeps its level (within 1 dB); FAT 0 and DETUNE 0 stay centred */
+static void fat_stereo(uint32_t fat, int detune, double *sum, double *side)
+{
+    uint32_t b, i, rep;
+    double s = 0, d = 0;
+    for (rep = 0; rep < 8u; rep++) {                   /* random start phases: average a few notes */
+        host_tracks_init();
+        trk[0].p[P_E4] = (int16_t)fat;
+        trk[0].p[P_DETUNE] = (int16_t)detune;
+        trk_note_on(&trk[0], 60, 100);
+        for (b = 0; b < 400u; b++) {
+            for (i = 0; i < CTL; i++)
+                mix_l[i] = mix_r[i] = send_l[i] = send_r[i] = 0;
+            mix_part(&trk[0], CTL);
+            if (b >= 100u)
+                for (i = 0; i < CTL; i++) {
+                    s += (double)(mix_l[i] + mix_r[i]) * (mix_l[i] + mix_r[i]);
+                    d += (double)(mix_l[i] - mix_r[i]) * (mix_l[i] - mix_r[i]);
+                }
+        }
+    }
+    *sum = sqrt(s);
+    *side = sqrt(d);
+}
+static int chk_stereo_voices(char *msg, uint32_t n)
+{
+    double s0, d0, s1, d1, s2, d2, db;
+    fat_stereo(4, 0, &s0, &d0);
+    fat_stereo(4, 60, &s1, &d1);
+    fat_stereo(0, 60, &s2, &d2);
+    db = 20 * log10(s1 / s0);
+    snprintf(msg, n, "stereo voices: FAT 4 spread side/sum %.2f (DETUNE 0: %.2f, FAT 0: %.2f), L+R level %+.2f dB vs DETUNE 0", d1 / s1, d0 / s0, d2 / s2, db);
+    return d0 < 0.02 * s0 && d2 < 0.02 * s2 && d1 / s1 > 0.1 && fabs(db) < 1.0;
+}
+
+/* #26: a hard-left impulse echoes left, right, left (the right line starts empty) */
+static int32_t in_zero(uint32_t p) { (void)p; return 0; }
+static int chk_stereo_echo(char *msg, uint32_t n)
+{
+    double e[4], hf;
+    int32_t pk, T = 11800, c = 5 + T, i, b;
+    host_tracks_init();
+    song.g[G_ETIME] = 40;
+    song.g[G_EFB] = 70;
+    song.g[G_EAMT] = 127;
+    for (b = 0; b < ECN; b++) {
+        for (i = 0; i < (int32_t)CTL; i++) {
+            mix_l[i] = b * (int32_t)CTL + i == 5 ? 20000 : in_zero(0);
+            mix_r[i] = 0;
+            send_l[i] = send_r[i] = 0;
+        }
+        echo_block(CTL);
+        memcpy(&ec_out[0][b * CTL], mix_l, sizeof mix_l);
+        memcpy(&ec_out[1][b * CTL], mix_r, sizeof mix_r);
+    }
+    ec_win(ec_out[0], c, &e[0], &hf, &pk);
+    ec_win(ec_out[1], c, &e[1], &hf, &pk);
+    ec_win(ec_out[1], c + T, &e[2], &hf, &pk);
+    ec_win(ec_out[0], c + 2 * T, &e[3], &hf, &pk);
+    snprintf(msg, n, "stereo ECHO, hard-left impulse: energy L %.0f / R %.0f at T, R %.0f at 2T, L %.0f at 3T", e[0], e[1], e[2], e[3]);
+    return e[0] > 100 * e[1] && e[2] > 100 * e[1] && e[3] > 1e5;
+}
+
+/* #26: a hard-left input reverberates from the left first; a centred one is balanced */
+static int chk_stereo_space(char *msg, uint32_t n)
+{
+    int32_t il[CTL], ir[CTL], wl[CTL], wr[CTL];
+    uint32_t f, i;
+    double l = 0, r = 0, lm = 0, rm = 0;
+    for (i = 0; i < 2u; i++) {
+        space_clear();
+        song.g[G_RPROG] = SP_CASTLE;
+        song.g[G_RSIZE] = 64;
+        song.g[G_RTONE] = 64;
+        for (f = 0; f < FS / 10u; f += CTL) {
+            uint32_t j;
+            for (j = 0; j < CTL; j++)
+                il[j] = f + j < 200u ? 15000 : 0, ir[j] = i ? il[j] : 0;
+            space_block(il, ir, wl, wr, CTL);
+            for (j = 0; j < CTL; j++) {
+                *(i ? &lm : &l) += (double)wl[j] * wl[j];
+                *(i ? &rm : &r) += (double)wr[j] * wr[j];
+            }
+        }
+    }
+    snprintf(msg, n, "stereo SPACE, first 100 ms: hard-left L/R energy %.2f, centred %.2f", l / r, lm / rm);
+    return l > 1.5 * r && lm > 0.5 * rm && lm < 2 * rm;
+}
+
 static int32_t in_burst(uint32_t p) { return p < 4000 ? (p / 50 & 1 ? 25000 : -25000) : 0; }
 static int chk_echo_bound(char *msg, uint32_t n)
 {
@@ -1148,7 +1237,7 @@ static int chk_echo_glide(char *msg, uint32_t n)
             song.g[G_ETIME] = 110;                  /* from 3500 to 14300 ticks */
         for (i = 0; i < (int32_t)CTL; i++) {
             mix_l[i] = mix_r[i] = in_sine(b * CTL + i);
-            send_r[i] = 0;
+            send_l[i] = send_r[i] = 0;
         }
         echo_block(CTL);
         for (i = 0; i < (int32_t)CTL; i++) {
@@ -1564,6 +1653,9 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: FAT live on held notes")->check = chk_fat_live;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     add(J_CHECK, "echo: off is silent and untouched, repeats decay and darken")->check = chk_echo_decay;
+    add(J_CHECK, "stereo: FAT copies spread, L+R level kept")->check = chk_stereo_voices;
+    add(J_CHECK, "stereo: ECHO bounces a hard-left impulse L R L")->check = chk_stereo_echo;
+    add(J_CHECK, "stereo: SPACE reverberates a hard-left input from the left")->check = chk_stereo_space;
     add(J_CHECK, "echo: REPEATS 127 stays bounded")->check = chk_echo_bound;
     add(J_CHECK, "echo: TIME change glides without a click")->check = chk_echo_glide;
     add(J_CHECK, "echo: 12-bit noise floor")->check = chk_echo_noise;

@@ -500,7 +500,9 @@ __attribute__((noinline)) static void fat_sync(track_t *t)
     }
 }
 
-/* render one block of the part into out (cleared here); returns the voices rendered */
+/* render one block of the part into out (cleared here); returns the voices rendered. out holds three blocks: the centre voices,
+ * then the FAT / UNISON copies with fk < 0 (left) and fk > 0 (right); the sides are used only if tr_side is set (issue #26) */
+static uint8_t tr_side;
 static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
     const engine_t *e = ENGINE;
@@ -520,8 +522,9 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     bend_fine = (bend - bend16 * 16) * 2367 / 2560;
     if (t->fat_seen != t->p[P_E4])                      /* only a change: voices shed by the budget stay shed */
         fat_sync(t);
-    for (i = 0; i < n; i++)
+    for (i = 0; i < 3u * n; i++)
         out[i] = 0;
+    tr_side = 0;
     for (i = 0; i < NVOICE; i++) {
         voice_t *v = &t->v[i];
         vmod_t m;
@@ -553,7 +556,8 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         m.shape = (64 << 8) + ((m.envq15 * p[P_ED_SHP]) >> 7);
-        PFX(2, e->render(t, v, out, n, &m));
+        tr_side |= v->fk ? 1u : 0u;
+        PFX(2, e->render(t, v, out + (v->fk ? (v->fk < 0 ? n : 2u * n) : 0u), n, &m));
         nr++;
     }
     return nr;

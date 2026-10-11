@@ -3,7 +3,7 @@
  * dry signal stays) and to the reverb send. At AMOUNT 0 it does nothing at all: the output is bit for bit as without it.
  *
  * Memory: two lines (A feeds B, B feeds back to A: the echoes ping-pong L R L R), 16K samples each at a ~22 kHz delay
- * clock (0.74 s), 12 bits packed 3 bytes per 2 samples = 48 KB. The input is the mono sum, halved to the delay clock by
+ * clock (0.74 s), 12 bits packed 3 bytes per 2 samples = 48 KB. The input is L into line A and R into line B, halved to the delay clock by
  * a two-sample average; the taps are doubled back to 44.1 kHz by linear interpolation.
  * Write: TPDF dither (+-1 LSB), the code is clamped to 12 bits; CRUNCH and TOY first run the sample through a sqrt curve
  * (ec_enc LUT) and square it on the way out (a compander: fine steps when quiet, coarse when loud: the grain).
@@ -157,7 +157,7 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
     if (!ec.on)
         ec_start();
     for (i = 0; i < (int32_t)n; i += 2) {
-        int32_t m = (mix_l[i] + mix_l[i + 1] + mix_r[i] + mix_r[i + 1]) >> 2, ya, yb, ca, cb, step = (tdc - ec.dc) >> 8;
+        int32_t ml = (mix_l[i] + mix_l[i + 1]) >> 1, mr = (mix_r[i] + mix_r[i + 1]) >> 1, ya, yb, ca, cb, step = (tdc - ec.dc) >> 8;
         if (ch == EC_BACK) {
             uint32_t ua = ec.ph, ub = (ua + (1u << 19)) & 0xFFFFF;
             uint32_t da = (((ua >> 7) * w4 >> 13) + 32u) << 12, db = (((ub >> 7) * w4 >> 13) + 32u) << 12;
@@ -182,8 +182,8 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
             ca = ec.hold_l;
             cb = ec.hold_r;
         }
-        ca = ec_quant(clamp(m + ca, -32767, 32767), comp, (uint32_t)(m != 0));
-        cb = ec_quant(cb, comp, (uint32_t)(m != 0));
+        ca = ec_quant(clamp(ml + ca, -32767, 32767), comp, (uint32_t)((ml | mr) != 0));   /* L feeds line A, R line B */
+        cb = ec_quant(clamp(mr + cb, -32767, 32767), comp, (uint32_t)((ml | mr) != 0));
         ec_put(ec_mem[0], ec.wr, ca);
         ec_put(ec_mem[1], ec.wr, cb);
         ec.wr = (ec.wr + 1u) & EC_MASK;
@@ -204,7 +204,9 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
         wr = mulq15(ec_wr[i], gw);
         mix_l[i] += wl;
         mix_r[i] += wr;
-        if (r)
-            send_r[i] += mulq15(clamp((wl + wr) >> 1, -xmax, xmax), r);
+        if (r) {
+            send_l[i] += mulq15(clamp(wl, -xmax, xmax), r);
+            send_r[i] += mulq15(clamp(wr, -xmax, xmax), r);
+        }
     }
 }
