@@ -26,6 +26,33 @@ static inline int32_t wave_read(const int16_t *a, const int16_t *b, int32_t w, u
     return sa + (((sb - sa) * w) >> 8);
 }
 
+/* The SCAN pair mixed once into a 256-point frame (plus the wrap point), shared by the voices while the pair and the
+ * weight stay the same (SCAN and WAVE settle within a few blocks): a sample is then one interpolation between two
+ * table points instead of two, and the frames' mix. Differs from wave_read by rounding only (+-2 of 32768). */
+static int16_t wb_tab[257];
+static const int16_t *wb_a, *wb_b;
+static int32_t wb_w = -1;
+static void wave_blend(const int16_t *a, const int16_t *b, int32_t w)
+{
+    uint32_t j;
+    if (a == wb_a && b == wb_b && w == wb_w)
+        return;
+    for (j = 0; j < 256u; j++) {
+        int32_t sa = a[j];
+        wb_tab[j] = (int16_t)(sa + (((b[j] - sa) * w) >> 8));
+    }
+    wb_tab[256] = wb_tab[0];
+    wb_a = a;
+    wb_b = b;
+    wb_w = w;
+}
+static inline int32_t blend_read(uint32_t ph)
+{
+    uint32_t i = ph >> 24;
+    int32_t a = wb_tab[i];
+    return a + (((wb_tab[i + 1u] - a) * (int32_t)((ph >> 9) & 0x7FFFu)) >> 15);
+}
+
 /* sample i (0..255) of the frame SCAN (0..127) of table, for the UI to draw */
 int16_t wave_peek(int table, int scan, int i)
 {
@@ -52,12 +79,15 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     uint32_t _tw = fm1_ticks();
 #endif
     const int16_t *p = t->p, *fa, *fb;
-    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s;
+    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s, bq, bstep;
     uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE], i;
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
     ss += ((p[P_E1] << 8) - ss) >> 2;
     wave_frames(p[P_E0], ss, &fa, &fb, &w);
+    wave_blend(fa, fb, w);
+    bq = (m->amp0 * VOICE_FS) >> 7;                   /* the amplitude ramp times VOICE_FS, Q8 */
+    bstep = (((m->amp1 * VOICE_FS) >> 7) - bq) >> CTL_LOG2;
     if (ft > 4u)
         ft = 4;
     if (ft == 4u) {                                   /* COMB: CUT the delay, RES the feedback */
@@ -70,10 +100,11 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
             v->s[7] = 1;
         }
         for (i = 0; i < n; i++) {
-            s = wave_read(fa, fb, w, ph) >> 1;
+            s = blend_read(ph) >> 1;
             ph += inc;
-            s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s), 16000) << 1;
-            out[i] += voice_amp(s, m, i) << 1;
+            s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s), 16000);
+            out[i] += (s * (bq >> 8)) >> 13;
+            bq += bstep;
         }
     } else {
         lad_t flt;
@@ -83,10 +114,11 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
 #endif
 #define LAD_LOOP(FT)                                                                           \
     for (i = 0; i < n; i++) {                                                                  \
-        s = wave_read(fa, fb, w, ph);                                                          \
+        s = blend_read(ph);                                                                    \
         ph += inc;                                                                             \
-        s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000) << 1;                              \
-        out[i] += voice_amp(s, m, i) << 1;                                                     \
+        s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000);                                   \
+        out[i] += (s * (bq >> 8)) >> 13;                                                       \
+        bq += bstep;                                                                           \
     }
         switch (ft) {                                 /* one loop per type: its mix folds into the code */
         case 0: LAD_LOOP(0) break;
