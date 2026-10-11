@@ -48,6 +48,7 @@ typedef struct {
     int32_t env_out;             /* last control-rate amplitude, Q15 */
     int32_t pitch16, pitch_cur;  /* 1/16 semitone, with glide */
     int32_t gstep;               /* glide TIME mode: 1/16 st per control tick, 0 = RATE mode */
+    int32_t fk;                  /* unison copy's spread, in DETUNE units (fine = fk * DETUNE * 56 / 889) */
     int32_t fine;                /* unison detune: phase increment * (1 + fine / 4096) */
     uint32_t ph[3];
     int32_t s[8];                /* engine state (filters, envs) */
@@ -61,6 +62,7 @@ typedef struct {                 /* per-voice control-rate modulation, computed 
     int32_t cutoff;              /* 0..127 << 8 */
     int32_t shape;               /* 0..127 << 8 */
     int32_t envq15;              /* env value (for engines that use it as a mod source) */
+    int32_t fk;                  /* unison copy's spread, in DETUNE units (fine = fk * DETUNE * 56 / 889) */
     int32_t fine;                /* the residual below 1/16 semitone in inc: unison detune, TUNE, bend (1/4096) */
 } vmod_t;
 

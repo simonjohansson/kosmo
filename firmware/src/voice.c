@@ -240,7 +240,7 @@ static void mono_play(track_t *t, uint32_t note, uint32_t vel, int retrig, int g
         int32_t k = 2 * (int32_t)i - (int32_t)(nv - 1u);   /* -7 .. 7 */
         if (nv > 1u && nv < NVOICE)
             k = k * (NVOICE - 1) / (int32_t)(nv - 1u);      /* fewer voices: the outer ones as wide */
-        v->fine = nv > 1u ? k * t->p[P_DETUNE] * 56 / 889 : 0;   /* up to ~±40 cents */
+        v->fk = nv > 1u ? k : 0;                            /* DETUNE: up to ~±40 cents, applied per control block */
         if (retrig || !v->active || !v->gate) {
             if ((!v->active || v->stage == 4u) && !voice_room(t, i > 0))
                 continue;                                   /* no room for this extra UNISON voice */
@@ -296,21 +296,33 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
         voice_t *v = voice_alloc(t, note);
         t->nmono = 0;                                   /* no stale mono stack after a mode change */
         t->mono_note = 0;
-        uint32_t nv = trk_copies(t), c, j;
-        v->fine = 0;
+        uint32_t nv = trk_copies(t), c, j, a0 = vage;
+        v->fk = 0;
         voice_start(t, v, note, nv == 1u ? vel : vel * 2u / (nv + 1u), t->p[P_GLIDE] != 0);
         for (c = 1; c < nv; c++) {                      /* FAT: copies in free voices, alternating sides of the lead */
             static uint32_t seed = 0x2345679u;
             voice_t *x = 0;
+            int stale = 0;
+            for (j = 0; j < NVOICE && !x; j++) {        /* a retrigger restarts the note's old copies, else they would hang */
+                voice_t *w = &t->v[j];
+                if (w != v && w->gate && w->note == note && w->age <= a0)
+                    x = w;
+            }
+            stale = x != 0;
             for (j = 0; j < NVOICE && !x; j++)
                 x = !t->v[j].active ? &t->v[j] : 0;
-            if (!x || !voice_room(t, 1))
+            if (!x || (!stale && !voice_room(t, 1)))
                 break;
-            x->fine = (int32_t)((c + 1u) / 2u) * 3 * (c & 1u ? 1 : -1) * t->p[P_DETUNE] * 56 / 889;
+            x->fk = (int32_t)((c + 1u) / 2u) * 3 * (c & 1u ? 1 : -1);
             voice_start(t, x, note, vel * 2u / (nv + 1u), 0);
             seed = seed * 1664525u + 1013904223u;
             x->ph[0] += seed;                           /* random phases: in phase they only get louder */
         }
+        for (j = 0; j < NVOICE; j++)                    /* FAT went down since: copies not restarted are let go */
+            if (t->v[j].gate && t->v[j].note == note && t->v[j].age <= a0) {
+                t->v[j].gate = 0;
+                t->v[j].stage = 3;
+            }
         return;
     }
     {
@@ -433,6 +445,7 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         int32_t env, pitch;
         if (!v->active)
             continue;
+        v->fine = v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
         env = env_tick(t, v);
         m.envq15 = env;
         m.amp1 = mulq15(env, v->vel * 258);

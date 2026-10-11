@@ -629,6 +629,7 @@ static int chk_fat(char *msg, uint32_t n)
             t->p[P_DETUNE] = spread ? 60 : 0;
             trk_note_on(t, 60, 100);
             bad += voices_busy() != 1u + f;
+            run_to(fpos + FS / 50u);                  /* fine follows DETUNE per control block */
             for (i = 0; i < NVOICE; i++)
                 if (t->v[i].active) {
                     lo = t->v[i].fine < lo ? t->v[i].fine : lo;
@@ -641,6 +642,18 @@ static int chk_fat(char *msg, uint32_t n)
             run_to(fpos + 2u * FS);                   /* let the tails die: the next case counts from 0 */
         }
     }
+    host_tracks_init();                               /* #16: the same held note again must not strand copies */
+    t->p[P_E4] = 4;
+    t->p[P_DETUNE] = 60;
+    trk_note_on(t, 60, 100);
+    trk_note_on(t, 60, 100);
+    bad += voices_busy() != 5u;
+    t->p[P_DETUNE] = 0;                               /* DETUNE reaches held notes */
+    run_to(fpos + FS / 50u);
+    for (i = 0; i < NVOICE; i++)
+        bad += t->v[i].active && t->v[i].fine;
+    trk_note_off(t, 60);
+    bad += mode_release_gates() != 0;
     snprintf(msg, n, "FAT 0..4: 1 + FAT voices per note, spread both ways by DETUNE, all released (%u wrong)", bad);
     return !bad;
 }
