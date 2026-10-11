@@ -798,6 +798,17 @@ int main(void)
         check("#126 120 detents/s, bouncing 0.2 ms: 8 right then 6 left at once -> 8, then 2", !bad);
     }
 
+    {   /* #17: the UI redraws for ~90 ms and takes the steps once after it: 25 ms detents (40/s) pile up in the scan,
+         * none lost, whatever the redraw length */
+        uint32_t ph, bad = 0;
+        for (ph = 0; ph < 40u; ph++) {
+            reset();
+            en_clear();
+            bad += en_run(en_turn(5000u + ph * 37u, 16, 1, 25000.0, 0.6, 200u, 60u) + 2000u) != 16;
+        }
+        check("#17 16 detents at 25 ms taken once at the end (a redraw in between): all 16", !bad);
+    }
+
     {   /* the LEDs through fm1_input_tick (the GPIO as memory): each tick writes the lines dark (the key read),
          * then, a dim-only LED on column p: lit | dim of p, the first bits of the shift, dark; the rest of the shift,
          * the latch (the lines dark), the lit LEDs of column n. Over bus speeds from 0 (the shift shorter than the
