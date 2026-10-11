@@ -160,6 +160,7 @@
 # Change baseline entries only for reviewed, intentional differences in sound or cost;
 # retain every unaffected golden / CPU / target entry. VERBOSE=1: every render.
 set -e
+[ -z "$FRIBIDI_LIB" ] || export DYLD_FALLBACK_LIBRARY_PATH="$FRIBIDI_LIB"
 export AC79_SDK="${AC79_SDK:-$HOME/fw-AC79_AIoT_SDK}"
 cd "$(dirname "$0")/.."
 OUT=build/host

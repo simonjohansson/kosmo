@@ -1,0 +1,51 @@
+[tools]
+python = "3.13.15"
+uv = "0.11.8"
+node = "24.21.0"
+clang = "23.1.3"
+# Pillow's wheel carries libraqm but dlopens libfribidi; conda's copy replaces brew.
+"conda:fribidi" = "1.0.16"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+AC79_SDK = "{{ config_root }}/build/deps/AC79_SDK"
+CC = "clang"
+# build.sh and run_tests.sh re-export it as DYLD_FALLBACK_LIBRARY_PATH: macOS strips DYLD_* at #!/bin/sh.
+FRIBIDI_LIB = "{{ get_env(name='MISE_DATA_DIR', default=env.HOME ~ '/.local/share/mise') }}/installs/conda-fribidi/1.0.16/lib"
+
+[tasks.setup]
+description = "Fetch the Python packages, the JieLi toolchain and the AC79 SDK if missing"
+run = '''
+uv pip install -q Pillow==12.3.0 fonttools==4.66.1
+[ -x ~/.jieli/toolchain/pi32v2/bin/clang ] || tools/get_toolchain.sh
+[ -f "$AC79_SDK/cpu/wl82/tools/uboot.boot" ] || git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+'''
+
+[tasks.build]
+description = "Build the firmware (./build.sh; Docker is used on macOS)"
+depends = ["setup"]
+run = "./build.sh"
+
+[tasks."build:docker"]
+description = "Build inside the linux/amd64 debian:bookworm-slim container (needs Docker running)"
+depends = ["setup"]
+env = { JIELI_DOCKER = "1" }
+run = '''
+docker info >/dev/null 2>&1 || { echo "build:docker: Docker is not running; start Docker Desktop (or colima) and retry" >&2; exit 1; }
+./build.sh
+'''
+
+[tasks.test]
+description = "Host tests (needs a prior build)"
+depends = ["setup"]
+run = "tests/run_tests.sh"
+
+[tasks.smoke]
+description = "Boot build/kosmo.bin in fm1-emulator (set FM1_EMULATOR)"
+run = "tools/emu_smoke.sh"
+
+[tasks.web]
+description = "Build the browser emulator (web/emu/build.sh; needs a prior build)"
+# Task-scoped: emsdk's install dir has a `docker` folder that would shadow the docker CLI on PATH.
+tools = { "asdf:mise-plugins/mise-emsdk" = "4.0.10" }
+run = "sh web/emu/build.sh"

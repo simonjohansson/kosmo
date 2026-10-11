@@ -8,29 +8,22 @@ The build makes three files in `build/`:
 | `loader/ota.bin` | the update loader |
 | `felucca.fwsc` | the installable package (app + loader) |
 
-## Prerequisites (macOS)
+## Prerequisites
 
-- Python 3 with Pillow and fontTools: `pip3 install Pillow fonttools` (the UI font and icons are
-  rasterised at build time)
-- Docker Desktop. The JieLi toolchain is Linux x86-64 only; the build runs each tool in a
-  `linux/amd64` `debian:bookworm-slim` container (Rosetta on Apple silicon). Keep the source
-  tree in a folder Docker can share, e.g. under `/Users`.
-- The JieLi Linux toolchain (clang 4.0.1 for pi32v2, from JieLi's package server):
+Install [mise](https://mise.jdx.dev) and run:
 
-  ```
-  tools/get_toolchain.sh            # installs to ~/.jieli/toolchain
-  ```
+```
+mise install     # Python, uv, Node, clang, fribidi
+mise run setup   # Pillow, fontTools, the JieLi toolchain (~/.jieli) and the AC79 SDK (build/deps)
+mise run build   # ./build.sh
+```
 
-- The JieLi AC79 SDK (Apache-2.0). The package uses three of its files
-  (`cpu/wl82/tools/uboot.boot`, `cfg_tool.bin`, `cfg/eq_cfg_hw.bin`); they are not part of this tree.
+Tasks: `build:docker` (forces the `linux/amd64` container, checks Docker first), `test`, `smoke`,
+`web` (browser emulator with Emscripten, task-scoped). External, not managed by mise:
 
-  ```
-  git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
-      https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
-  ```
-
-- Node.js (optional, for the web tests).
-- Emscripten (optional, `emcc`: the browser emulator, `web/emu/`).
+- Docker (Docker Desktop, OrbStack, ...): required on macOS, since the JieLi toolchain is Linux x86-64
+  only; the build runs each tool in a `debian:bookworm-slim` container. Keep the tree under `/Users`.
+- The fm1-emulator binary for `smoke` (`FM1_EMULATOR`).
 
 On Linux x86-64 the toolchain runs natively and Docker is not needed.
 
