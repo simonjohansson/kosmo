@@ -481,6 +481,34 @@ static int chk_scan(char *msg, uint32_t n)
     return !bad;
 }
 
+/* every filter TYPE at RES 127 with the cutoff swept over low and high notes: nothing beyond 16 bits, the tail dies out */
+static int chk_filters(char *msg, uint32_t n)
+{
+    uint32_t ft, w, k;
+    track_t *t = &trk[0];
+    host_tracks_init();
+    for (ft = 0; ft < 4u; ft++)
+        for (w = 0; w < 8u; w += 7u) {
+            t->p[P_FTYPE] = (int16_t)ft;
+            t->p[P_E0] = (int16_t)w;
+            t->p[P_E1] = 127;
+            t->p[P_E3] = 127;
+            t->p[P_REV] = 0;
+            trk_note_on(t, 36, 127);
+            trk_note_on(t, 84, 127);
+            for (k = 0; k < FS / 2u / CTL; k++) {
+                t->p[P_E2] = (int16_t)(k * 127u / (FS / 2u / CTL));
+                blk();
+            }
+            trk_note_off(t, 36);
+            trk_note_off(t, 84);
+            rel_at = fpos;
+            finish();
+        }
+    snprintf(msg, n, "TYPE LP/BP/HP/NOTCH at RES 127: %u samples beyond 16 bits, voices free %.2f s after, tail AC %d",
+             R.over, R.free_s, R.tail_peak);
+    return !R.over && R.free_s >= 0 && R.tail_peak <= LIM_TAIL;
+}
 
 
 /* Voices held before a mode change must remain reclaimable except for the lead. */
@@ -783,6 +811,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "voices: note-offs after live voice mode changes")->check = chk_mode_release;
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
+    add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */
