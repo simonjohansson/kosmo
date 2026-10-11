@@ -55,36 +55,59 @@ static inline void master_out(int32_t *l, int32_t *r)
     *r = softclip(*r);
 }
 
-/* ROOM (Freeverb-style: four combs, two allpasses), added to out */
+/* ROOM (Freeverb-style: four combs, two allpasses), added to out. One pass over the block per line, so each loop
+ * keeps its few values in registers; a pass runs in segments up to the line's wrap, with no wrap test per sample.
+ * The same sums in the same order as the sample by sample form, so the output is bit for bit the same. */
+static int32_t rv_in[CTL], rv_a[CTL];
+
 static __attribute__((noinline)) void rev_room(const int32_t *rev_in, int32_t *out, uint32_t n)
 {
-    uint32_t i, k;
-    int32_t size = 25000 + song.g[G_RSIZE] * 50, damp = 32767 - song.g[G_RDAMP] * 200;
-    for (i = 0; i < n; i++) {
-        int32_t a = 0;
-        int16_t *c = rev_comb;
-        int32_t in = mulq15(rev_in[i], 2580);           /* 1/8 at -4 dB: level as before the allpass fix */
-        for (k = 0; k < 4u; k++) {
-            int32_t o = c[fx.comb_i[k]];
-            fx.comb_lp[k] = o + mulq15(fx.comb_lp[k] - o, 32767 - damp);
-            c[fx.comb_i[k]] = (int16_t)clamp(in + mulq15(fx.comb_lp[k], size), -32768, 32767);
-            if (++fx.comb_i[k] >= REV_COMB[k])
-                fx.comb_i[k] = 0;
-            a += o;
-            c += REV_COMB[k];
+    uint32_t i, k, j, seg;
+    int32_t size = 25000 + song.g[G_RSIZE] * 50, damp = 32767 - song.g[G_RDAMP] * 200, a;
+    int16_t *c = rev_comb;
+    for (i = 0; i < n; i++)
+        rv_in[i] = mulq15(rev_in[i], 2580);           /* 1/8 at -4 dB: level as before the allpass fix */
+    for (k = 0; k < 4u; k++) {
+        uint32_t ci = fx.comb_i[k];
+        int32_t lp = fx.comb_lp[k], g = 32767 - damp;
+        for (i = 0; i < n; i += seg) {
+            int16_t *q = c + ci;
+            seg = REV_COMB[k] - ci < n - i ? REV_COMB[k] - ci : n - i;
+            for (j = 0; j < seg; j++) {
+                int32_t o = q[j];
+                lp = o + mulq15(lp - o, g);
+                q[j] = (int16_t)clamp(rv_in[i + j] + mulq15(lp, size), -32768, 32767);
+                rv_a[i + j] = k ? rv_a[i + j] + o : o;
+            }
+            ci += seg;
+            if (ci == REV_COMB[k])
+                ci = 0;
         }
-        c = rev_ap;
-        for (k = 0; k < 2u; k++) {
-            int32_t o = c[fx.ap_i[k]];
-            int32_t v = a + (o >> 1);
-            c[fx.ap_i[k]] = (int16_t)clamp(v, -32768, 32767);
-            a = o - a;                                  /* Freeverb: out = buf - in (o - v is a notch comb) */
-            if (++fx.ap_i[k] >= REV_AP[k])
-                fx.ap_i[k] = 0;
-            c += REV_AP[k];
-        }
-        out[i] += a;
+        fx.comb_i[k] = (uint16_t)ci;
+        fx.comb_lp[k] = lp;
+        c += REV_COMB[k];
     }
+    c = rev_ap;
+    for (k = 0; k < 2u; k++) {
+        uint32_t ci = fx.ap_i[k];
+        for (i = 0; i < n; i += seg) {
+            int16_t *q = c + ci;
+            seg = REV_AP[k] - ci < n - i ? REV_AP[k] - ci : n - i;
+            for (j = 0; j < seg; j++) {
+                int32_t o = q[j];
+                a = rv_a[i + j];
+                q[j] = (int16_t)clamp(a + (o >> 1), -32768, 32767);
+                rv_a[i + j] = o - a;                   /* Freeverb: out = buf - in (o - v is a notch comb) */
+            }
+            ci += seg;
+            if (ci == REV_AP[k])
+                ci = 0;
+        }
+        fx.ap_i[k] = (uint16_t)ci;
+        c += REV_AP[k];
+    }
+    for (i = 0; i < n; i++)
+        out[i] += rv_a[i];
 }
 
 
