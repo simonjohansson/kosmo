@@ -184,19 +184,13 @@ static uint8_t fm1_led_dim[FM1_NCOL];
 static uint8_t fm1_led_breath[FM1_NCOL];   /* breathing LEDs (see top): dark .. ~60 % of lit, in step */
 static uint8_t fm1_led_mid[FM1_NCOL];      /* a steady mid level (see top): lit 1 frame in FM1_LED_MID_N */
 
-/* scan diagnostics (console `inp`, read and cleared by the main loop): the gap between ticks
- * = the on-time of the column lit in it, in TIMER4 ticks (24 MHz) */
-#define FM1_GAP_BINS 8u                /* < 0.15, 0.3, 0.6, 1.2, 2.4, 4.8, 9.6 ms, longer */
+/* scan diagnostics (tests/input_test.c, the press latency) */
 static volatile struct {
-    uint32_t last, gap_max, gap_hist[FM1_GAP_BINS];
-    uint32_t on[FM1_NCOL], on_max[FM1_NCOL];
-    uint32_t cost_sum, cost_max, ticks;
     uint32_t enc_moves[FM1_NENC], enc_lost[FM1_NENC];   /* accepted transitions, 2-state jumps */
     uint32_t press_n, press_sum, press_max;   /* note keys: first closed scan -> debounced press (ticks) */
     /* seq.c keyboard_block, from the same first closed scan: to the note-on in the render, and to
      * the note's first sample leaving the I2S DMA (the half it renders starts one half later) */
     uint32_t kb_n, kb_sum, kb_max, dac_sum, dac_max;
-    uint32_t dim_n, dim_sum;     /* the dim pulses and their widths (TIMER4 ticks) */
 } fm1_in_stat;
 
 static void fm1__led_lines(uint32_t rowmask)       /* row bit 1 PA9, 2 PA10, 3 PH6, 4 PH9 */
@@ -522,19 +516,9 @@ static void fm1_led_anim_stop(void) { fm1__an_f = 0; }   /* (the LEDs as the las
 static void fm1_input_tick(void)
 {
     uint32_t p = fm1__tick_col, n = p + 1u == FM1_NCOL ? 0u : p + 1u;
-    uint32_t t0 = fm1_ticks(), g = t0 - fm1_in_stat.last, b = 0;
     uint32_t w = 0xFFFFu ^ (1u << n) ^ (n < 2u ? 1u << (11u + n) : 0u), lit, dim = 0, k = fm1__dim_k;
     uint32_t br = 0, kb = 0;
     fm1__led_lines(0);
-    fm1_in_stat.last = t0;
-    while (b < FM1_GAP_BINS - 1u && g >= (150u * FM1_TICKS_PER_US << b))
-        b++;
-    fm1_in_stat.gap_hist[b]++;
-    if (g > fm1_in_stat.gap_max)
-        fm1_in_stat.gap_max = g;
-    fm1_in_stat.on[p] += g;
-    if (g > fm1_in_stat.on_max[p])
-        fm1_in_stat.on_max[p] = g;
     fm1_in.raw[p] = (uint8_t)fm1__rows();          /* column p has been latched one tick (the lines dark) */
     if (p == 0u)
         fm1__breath_frame();
@@ -567,8 +551,6 @@ static void fm1_input_tick(void)
             d = fm1_ticks() - t1;
         fm1__led_lines(0);
         fm1__dim_k = (uint8_t)(d > T ? (k ? k - 1u : 0u) : d < T && k < 16u ? k + 1u : k);
-        fm1_in_stat.dim_n++;
-        fm1_in_stat.dim_sum += d;
     } else {
         k = 0;
     }
@@ -584,11 +566,6 @@ static void fm1_input_tick(void)
         if (fm1__an_f)                             /* the power-on sweep: the next frame's picture */
             fm1__anim_frame();
     }
-    g = fm1_ticks() - t0;
-    fm1_in_stat.cost_sum += g;
-    fm1_in_stat.ticks++;
-    if (g > fm1_in_stat.cost_max)
-        fm1_in_stat.cost_max = g;
 }
 
 /* main-loop critical section against fm1_input_tick (main loop only: it
