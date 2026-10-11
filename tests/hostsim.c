@@ -53,8 +53,8 @@ static uint64_t now_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
 }
 
-/* the sounds of the tests (Felucca's ANALOG factory presets, which Kosmo no longer carries, and two for WAVE SYNC /
- * SUB): the engine's E values, ATK DEC SUS REL, the ENV -> FILTER amount, MONO, the reverb send */
+/* the sounds of the tests: the engine's E values (WAVE SCAN CUT RES), ATK DEC SUS REL, the ENV -> FILTER amount,
+ * MONO, the reverb send */
 typedef struct {
     const char *name;
     int8_t e[8];
@@ -64,20 +64,12 @@ typedef struct {
     uint8_t rev;
 } host_sound_t;
 static const host_sound_t HOST_SOUNDS[] = {
-    {"SAW LEAD", {0, 12, 64, 0, 90, 30, 10, 64}, {4, 70, 100, 50}, 20, 1, 30},
-    {"SOFT PAD", {0, 20, 64, 4, 60, 10, 0, 32}, {80, 90, 110, 95}, 10, 0, 70},
-    {"SQR BASS", {1, 0, 0, 0, 50, 70, 40, 64}, {0, 60, 40, 30}, 30, 1, 10},
-    {"PWM STR", {4, 8, 40, 0, 75, 20, 0, 48}, {60, 80, 110, 85}, 8, 0, 60},
-    {"ACID", {0, 0, 0, 0, 50, 100, 25, 64}, {0, 55, 20, 30}, 48, 1, 15},
-    {"SINE KEY", {3, 6, 50, 0, 127, 0, 0, 0}, {2, 80, 30, 70}, 0, 0, 40},
-    {"RAVE", {4, 30, 64, 0, 85, 20, 30, 64}, {20, 80, 110, 60}, 10, 1, 30},
-    {"SUB BASS", {3, 0, 0, 0, 40, 0, 20, 0}, {0, 60, 100, 20}, 0, 1, 10},
-    {"PLUCK", {0, 8, 50, 0, 30, 40, 0, 64}, {0, 88, 0, 60}, 55, 0, 30},
-    {"BRASS", {0, 10, 64, 0, 45, 20, 10, 64}, {35, 70, 90, 45}, 40, 0, 40},
-    {"WIND", {0, 0, 0, 90, 30, 90, 0, 0}, {60, 90, 60, 80}, 50, 0, 70},
-    {"STRINGS", {0, 25, 64, 0, 70, 10, 0, 32}, {70, 90, 115, 90}, 5, 0, 70},
-    {"SYNC LEAD", {5, 40, 64, 0, 80, 30, 0, 64}, {4, 70, 100, 50}, 30, 1, 30},
-    {"SUB SAW", {6, 0, 80, 0, 70, 20, 0, 64}, {0, 60, 100, 40}, 0, 1, 10},
+    {"ROBOT LEAD", {0, 40, 90, 30}, {4, 70, 100, 50}, 20, 1, 30},
+    {"CHOIR PAD", {1, 30, 60, 10}, {80, 90, 110, 95}, 10, 0, 70},
+    {"BELLS", {2, 90, 110, 20}, {0, 88, 0, 60}, 30, 0, 50},
+    {"BUZZ BASS", {3, 20, 50, 70}, {0, 60, 40, 30}, 30, 1, 10},
+    {"ORGAN", {4, 60, 127, 0}, {2, 80, 100, 40}, 0, 0, 30},
+    {"ZAP", {7, 127, 70, 100}, {0, 55, 20, 30}, 48, 1, 15},
 };
 #define NHOST_SOUNDS ((uint32_t)NELEM(HOST_SOUNDS))
 
@@ -160,14 +152,14 @@ int main(int argc, char **argv)
             inst.p[P_LEVEL] = (int16_t)atoi(getenv("LEVEL"));
         if (getenv("SWEEP")) {          /* cutoff and resonance sweeps while a note is held */
             uint32_t t = f * 1000 / FS;  /* ms */
-            inst.p[P_E4] = (int16_t)((t / 4) % 256 < 128 ? (t / 4) % 128 : 127 - (t / 4) % 128);
-            inst.p[P_E5] = (int16_t)((t / 7) % 256 < 128 ? (t / 7) % 128 : 127 - (t / 7) % 128);
+            inst.p[P_E2] = (int16_t)((t / 4) % 256 < 128 ? (t / 4) % 128 : 127 - (t / 4) % 128);
+            inst.p[P_E3] = (int16_t)((t / 7) % 256 < 128 ? (t / 7) % 128 : 127 - (t / 7) % 128);
             fm1_in.notes = (f > FS / 20) ? (1u << 7) : 0;
         }
         if (getenv("NOTE"))             /* NOTE=k: one key (7 = C4, see OCT) held to 0.5 s before the end */
             fm1_in.notes = (f > FS / 20 && f + FS / 2 < frames) ? 1u << atoi(getenv("NOTE")) : 0;
-        if (getenv("VSWEEP"))           /* VSWEEP=1: EDIT 1 (P_E0) from 0 to 127 over the render */
-            inst.p[P_E0] = (int16_t)((uint64_t)f * 128u / frames);
+        if (getenv("VSWEEP"))           /* VSWEEP=1: SCAN (P_E1) from 0 to 127 over the render */
+            inst.p[P_E1] = (int16_t)((uint64_t)f * 128u / frames);
         if (getenv("PSWEEP")) {         /* PSWEEP=id:from:to: a part parameter from .. to over the render */
             int id, a, b;
             if (sscanf(getenv("PSWEEP"), "%d:%d:%d", &id, &a, &b) == 3 && id >= 0 && id < P_COUNT)

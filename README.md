@@ -3,7 +3,7 @@
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 Kosmo is a synth firmware for kids, for the M-VAVE FM-1. It is a fork of
-[Felucca](https://github.com/hugelton/Felucca) cut down to one engine (ANALOG, with its filter and ADSR envelope),
+[Felucca](https://github.com/hugelton/Felucca) cut down to one engine (WAVE, a wavetable oscillator with its filter and ADSR envelope),
 the ROOM reverb, the 27 keys, USB-MIDI and TRS MIDI in, the MASTER knob, and the update path. A new wavetable
 oscillator, filter types, reverb and a kids' UI are to come on top.
 

@@ -3,8 +3,8 @@
 /* Regression suite of the KOSMO DSP on the Mac (same sources as the firmware, through hostsim.c).
  *   build/host/regress [GOLDEN_FILE CPU_FILE]      (run_tests.sh builds and runs it)
  *
- * 1. golden renders: every test sound (hostsim.c HOST_SOUNDS: the ANALOG waves, SYNC and SUB), each WAVE, the filter TYPEs
- *    (LP / BP / HP), the voice modes (POLY / MONO / LEGATO / UNISON), the ROOM reverb (send, SIZE, DAMP), the keys with
+ * 1. golden renders: every test sound (hostsim.c HOST_SOUNDS: the WAVE sounds), each WAVE, the filter TYPEs
+ *    (LP / BP / HP / NOTCH), the voice modes (POLY / MONO / LEGATO / UNISON), the ROOM reverb (send, SIZE, DAMP), the keys with
  *    OCT-/OCT+, and MIDI (notes, bend, sustain). Each render plays a fixed phrase (notes, an overlap, a chord, note-offs,
  *    the release tail) and is reduced to a 64-bit FNV-1a hash of its output samples, compared with GOLDEN_FILE
  *    (tests/golden.txt). Every render runs in its own fork()ed child of a process that never touched the DSP state, so all
@@ -170,14 +170,14 @@ static void job_sound(const job_t *j)
     phrase(&trk[0], 60);
 }
 
-static void job_wave(const job_t *j)            /* arg: WAVE 0..6 on the default sound */
+static void job_wave(const job_t *j)            /* arg: WAVE 0..7 on the default sound */
 {
     host_tracks_init();
     trk[0].p[P_E0] = j->arg;
     phrase(&trk[0], 60);
 }
 
-static void job_filter(const job_t *j)          /* arg: the filter TYPE, LP BP HP, on the test sound pi */
+static void job_filter(const job_t *j)          /* arg: the filter TYPE, LP BP HP NOTCH, on the test sound pi */
 {
     host_tracks_init();
     host_sound(&trk[0], j->pi);
@@ -418,6 +418,71 @@ static int chk_budget(char *msg, uint32_t n)
     return worst <= NVOICE && !fading && R.free_s >= 0;
 }
 
+/* ---- WAVE / filter / reverb checks (issues #3 #4 #5) ---- */
+/* blocks of the mix: the largest sample-to-sample step and the sum of the steps of the left channel */
+static int32_t prev_l;
+static double lvl_sum;          /* sum of |sample|: the frames differ in level or in edges, not always in both */
+static void steps(uint32_t blocks, int32_t *maxd, double *sum)
+{
+    uint32_t b, i;
+    for (b = 0; b < blocks; b++) {
+        blk();
+        for (i = 0; i < CTL; i++) {
+            int32_t d = last_out[2u * i] - prev_l;
+            d = d < 0 ? -d : d;
+            prev_l = last_out[2u * i];
+            *maxd = d > *maxd ? d : *maxd;
+            *sum += d;
+            lvl_sum += llabs(last_out[2u * i]);
+        }
+    }
+}
+
+/* SCAN swept 0..127 in one second on a held note, every table: no click (bounded step), and the frames differ */
+static int chk_scan(char *msg, uint32_t n)
+{
+    uint32_t tb, k, bad = 0, nb = FS / CTL;
+    int32_t worst = 0;
+    track_t *t = &trk[0];
+    for (tb = 0; tb < 8u; tb++) {
+        int32_t md = 0, md2 = 0, ref;
+        double s0 = 0, s1 = 0, l0, l1;
+        host_tracks_init();
+        t->p[P_E0] = (int16_t)tb;
+        t->p[P_E2] = 127;
+        t->p[P_E3] = 0;
+        t->p[P_SUS] = 127;
+        t->p[P_REV] = 0;
+        trk_note_on(t, 48, 100);
+        run_to(fpos + FS / 4u);
+        lvl_sum = 0;
+        steps(FS / 10u / CTL, &md, &s0);
+        l0 = lvl_sum;
+        ref = md;
+        md = 0;
+        for (k = 0; k < nb; k++) {
+            t->p[P_E1] = (int16_t)(k * 127u / (nb - 1u));
+            steps(1, &md, &s1);
+        }
+        s1 = 0;
+        lvl_sum = 0;
+        steps(FS / 10u / CTL, &md2, &s1);
+        l1 = lvl_sum;
+        ref = md2 > ref ? md2 : ref;
+        worst = md > worst ? md : worst;
+        if (md > ref * 2 || (s1 < s0 * 1.05 && s0 < s1 * 1.05 && l1 < l0 * 1.05 && l0 < l1 * 1.05))
+            fprintf(stderr, "scan table %u: sweep step %d, steady steps %d, steps %.0f -> %.0f, level %.0f -> %.0f\n", tb, md, ref, s0, s1, l0, l1);
+        bad += md > ref * 2 || (s1 < s0 * 1.05 && s0 < s1 * 1.05 && l1 < l0 * 1.05 && l0 < l1 * 1.05);
+        trk_note_off(t, 48);
+        run_to(fpos + FS / 2u);
+    }
+    snprintf(msg, n, "SCAN sweep, 8 tables: largest step %d (limit 2x the steady frames' own), %u tables with a click or without a change",
+             worst, bad);
+    return !bad;
+}
+
+
+
 /* Voices held before a mode change must remain reclaimable except for the lead. */
 static int chk_mode_budget(char *msg, uint32_t n)
 {
@@ -650,9 +715,9 @@ int main(int argc, char **argv)
     int gupd = getenv("GOLDEN_UPDATE") != 0, cupd = getenv("BUDGET_UPDATE") != 0, verbose = getenv("VERBOSE") != 0;
     uint32_t jobs_at_once = getenv("JOBS") ? (uint32_t)atoi(getenv("JOBS")) : 8u;
     static const char *const MN[4] = {"POLY", "MONO", "LEGATO", "UNISON"};
-    static const char *const FN[3] = {"LP", "BP", "HP"};
+    static const char *const FN[4] = {"LP", "BP", "HP", "NOTCH"};
     static const char *const RN[5] = {"dry", "send40", "send127", "big_bright", "small_dark"};
-    static const uint8_t MODE_S[3] = {0, 1, 5}, REV_S[2] = {1, 8}, FILT_S[3] = {0, 4, 11};
+    static const uint8_t MODE_S[3] = {0, 1, 3}, REV_S[2] = {1, 2}, FILT_S[3] = {0, 3, 5};
     static kv_t gold[MAXJ], cpu[MAXJ];
     uint32_t ng, nc, pi, i, g0, g1, c0, c1, k0, heavy_i = 0;
     uint32_t g_changed = 0, g_new = 0, g_gone = 0, h_fail = 0, c_fail = 0, c_warn = 0, k_fail = 0, crash = 0;
@@ -671,12 +736,12 @@ int main(int argc, char **argv)
         j = add(J_SOUND, name);
         j->pi = (uint8_t)pi;
     }
-    for (i = 0; i < 7u; i++) {
-        snprintf(name, sizeof name, "wave/%s", ENGINE->edit[0].names[i]);
+    for (i = 0; i < 8u; i++) {
+        snprintf(name, sizeof name, "wave/%s", WAVE_NAMES[i]);
         add(J_WAVE, name)->arg = (uint8_t)i;
     }
     for (i = 0; i < 3u; i++)
-        for (k0 = 0; k0 < 3u; k0++) {
+        for (k0 = 0; k0 < 4u; k0++) {
             job_t *j;
             slug(s, HOST_SOUNDS[FILT_S[i]].name, sizeof s);
             snprintf(name, sizeof name, "filter/%s/%s", s, FN[k0]);
@@ -717,6 +782,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "voices: budget after a live mode change")->check = chk_mode_budget;
     add(J_CHECK, "voices: note-offs after live voice mode changes")->check = chk_mode_release;
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
+    add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */

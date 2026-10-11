@@ -80,7 +80,7 @@ tests/run_tests.sh
 Runs the host tests and, with Node.js and Emscripten, the browser emulator's. Run it after `./build.sh`
 (it uses `build/` and needs `AC79_SDK` set as for the build). The suites cover flash storage, the settings, the keys
 and knobs, MIDI (USB, TRS, bend, sustain, panic), USB audio, the update entry and loader, the command-line
-installer, the fonts and palettes, and the DSP (the voices, the ANALOG engine and its filter, the ROOM reverb, the
+installer, the fonts and palettes, and the DSP (the voices, the WAVE engine and its filter, the ROOM reverb, the
 master).
 
 The regression suite (`tests/regress.c`) renders the test sounds, waves, filter types, voice modes, reverb settings,

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Target-side cost estimate of the hot DSP code, from the pi32v2 objdump listing tools/build.py writes
-(build/felucca.dis). For the ANALOG render functions, the reverb and the audio ISR: the instructions
+(build/felucca.dis). For the WAVE render functions, the reverb and the audio ISR: the instructions
 inside loops (every address range closed by a backward branch: the per-sample loops and what they
 contain), and the hardware divides and calls in them. cost = the loop instructions, each weighted 4 per
 level of nesting (an inner loop runs several times per sample) and 1 + 8 for a divide (many cycles). A static count, not a cycle count: it changes only when the compiled code changes,
@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-FUNCS = ["analog_render", "analog_render_x", "analog_render_f",   # ANALOG (eng_analog.c): the render, WAVE SYNC / SUB, filter TYPE
+FUNCS = ["wave_render",                                  # WAVE (eng_wave.c)
          "fm1_alnk0_irq", "fm1_timer5_irq",               # the audio ISR; TIMER5: the key / LED scan (hal/fm1_input.h)
          "uac_tap48",                                       # the USB audio input at 48 kHz: the 44.1 -> 48 resampler (usb.c)
          "rev_room"]                                        # the ROOM reverb bus (fx.c)

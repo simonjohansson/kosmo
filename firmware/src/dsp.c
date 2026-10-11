@@ -100,14 +100,16 @@ static inline void tsvf_coef(tsvf_t *c, int32_t cut, int32_t reso)   /* reso 0..
     tsvf_coef_k(c, cut, 8192 - reso * 7600 / 127);
 }
 
-static inline int32_t tsvf_lp(const tsvf_t *c, int32_t in, int32_t *ic1, int32_t *ic2)
+/* k: the damping (Q12) the coefficients were made with; ft: 0 LP, 1 BP, 2 HP, 3 NOTCH (= LP + HP) */
+static inline int32_t tsvf_tap(const tsvf_t *c, int32_t k, int32_t in, int32_t *ic1, int32_t *ic2, uint32_t ft)
 {
     int32_t v3 = in - *ic2;
     int32_t v1 = (c->a1 * *ic1 + c->a2 * v3) >> 13;
     int32_t v2 = *ic2 + ((c->a2 * *ic1 + c->a3 * v3) >> 13);
+    int32_t kv = (k * v1) >> 12;
     *ic1 = clamp(2 * v1 - *ic1, -150000, 150000);
     *ic2 = clamp(2 * v2 - *ic2, -150000, 150000);
-    return v2;
+    return ft == 0 ? v2 : ft == 1 ? v1 : ft == 2 ? in - kv - v2 : in - kv;
 }
 
 /* amplitude ramp over the block. Blocks are always CTL long, so x / CTL is a

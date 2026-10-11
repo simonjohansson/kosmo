@@ -57,7 +57,7 @@
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
-#include "engines.c"             /* dsp.c, eng_analog.c */
+#include "engines.c"             /* dsp.c, eng_wave.c */
 #include "params.c"
 #include "voice.c"
 #include "fx.c"
