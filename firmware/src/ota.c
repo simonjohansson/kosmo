@@ -3,7 +3,7 @@
 /* M-UPGRADE entry: "step 1 lite".
  *
  * The updater talks SysEx (F0 pack7(00 59 cmd len24 body chk) F7):
- *   cmd 0x11  handshake -> we answer our package identity (FELUCCA_ID)
+ *   cmd 0x11  handshake -> we answer our package identity (KOSMO_ID)
  *   F0 22 24 35 7F F7  upgrade -> ota_session(): pull parts of the package
  *     with cmd 0x30 read requests, check them, stage the package's update
  *     loader at 0xE0000 (outside Felucca's store), ask 0xE0000000 ("success"),
@@ -12,7 +12,7 @@
  * Nothing is committed before the host's "success"; any failure erases the
  * staging area and Felucca carries on.
  *
- * Portable core: the firmware (felucca.c) and the Mac test (ota_test.c)
+ * Portable core: the firmware (kosmo.c) and the Mac test (ota_test.c)
  * supply these hooks:
  *   ota_wire_send(p, n)        one complete F0..F7 message to the host
  *   ota_frame_get(&p, &n)      next received SysEx (7-bit bytes between F0/F7), 0 if none
@@ -128,7 +128,7 @@ static int ota_send_msg(uint32_t cmd, const uint8_t *body, uint32_t n)   /* n <=
 
 static void ota_reply_identity(void)
 {
-    static const char ID[] = FELUCCA_ID;         /* == the package marker string */
+    static const char ID[] = KOSMO_ID;         /* == the package marker string */
     uint8_t id[27];
     uint32_t i;
     for (i = 0; i < sizeof id; i++)
@@ -359,16 +359,16 @@ static int ota_session(void)
         parm[8 + i] = (uint8_t)"ota-FM-1_015"[i];    /* the loader's own USB identity */
     ota_wr32(parm + 72, OTA_AREA);
     ota_wr16(parm, ota_crc16(parm + 2, 78, 0));
-#if FELUCCA_OTA_DRYRUN
+#if KOSMO_OTA_DRYRUN
     ota_unstage();
     ota_show(9, 1);                                 /* 1 = dry run complete */
     return 1;
 #endif
-#ifndef FELUCCA_OTA_RAMONLY
-#define FELUCCA_OTA_RAMONLY 0                       /* 1: RAM record only, no power-loss resume (a power
+#ifndef KOSMO_OTA_RAMONLY
+#define KOSMO_OTA_RAMONLY 0                       /* 1: RAM record only, no power-loss resume (a power
                                                      * cycle leaves a broken loader behind) */
 #endif
-    if (!FELUCCA_OTA_RAMONLY && (ota_prog(OTA_RES, parm, sizeof parm) || ota_fread(OTA_RES, back, sizeof back) ||
+    if (!KOSMO_OTA_RAMONLY && (ota_prog(OTA_RES, parm, sizeof parm) || ota_fread(OTA_RES, back, sizeof back) ||
         !ota_memeq(back, parm, sizeof parm))) {
         ota_unstage();
         ota_show(9, -14);

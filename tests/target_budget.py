@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 """Target-side cost estimate of the hot DSP code, from the pi32v2 objdump listing tools/build.py writes
-(build/felucca.dis). For the WAVE render functions, the reverb and the audio ISR: the instructions
+(build/kosmo.dis). For the WAVE render functions, the reverb and the audio ISR: the instructions
 inside loops (every address range closed by a backward branch: the per-sample loops and what they
 contain), and the hardware divides and calls in them. cost = the loop instructions, each weighted 4 per
 level of nesting (an inner loop runs several times per sample) and 1 + 8 for a divide (many cycles). A static count, not a cycle count: it changes only when the compiled code changes,
@@ -18,13 +18,13 @@ FUNCS = ["wave_render",                                  # WAVE (eng_wave.c)
          "fm1_alnk0_irq", "fm1_timer5_irq",               # the audio ISR; TIMER5: the key / LED scan (hal/fm1_input.h)
          "uac_tap48",                                       # the USB audio input at 48 kHz: the 44.1 -> 48 resampler (usb.c)
          "rev_room"]                                        # the ROOM reverb bus (fx.c)
-OPTIONAL = {"uac_tap48": 504}   # (absent from a FELUCCA_UAC_48K=0 or FELUCCA_UAC=0 build)
+OPTIONAL = {"uac_tap48": 504}   # (absent from a KOSMO_UAC_48K=0 or KOSMO_UAC=0 build)
 TOL = 0.10                      # exact (no noise): small edits pass, a grown render loop does not
 DIV_W = 8                       # a divide weighs 1 + 8 instructions
 NEST = 4                        # an instruction in a loop inside a loop weighs 4, two deep 16, ...
 MAXD = 4
 
-dis = sys.argv[1] if len(sys.argv) > 1 else "build/felucca.dis"
+dis = sys.argv[1] if len(sys.argv) > 1 else "build/kosmo.dis"
 budget = sys.argv[2] if len(sys.argv) > 2 else "tests/target_budget.txt"
 LABEL = re.compile(r"^([A-Za-z_][A-Za-z_0-9.]*):$")
 INSN = re.compile(r"^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} )+)\s*(.*)$")
@@ -91,7 +91,7 @@ def main():
     if os.environ.get("BUDGET_UPDATE"):
         with open(budget, "w") as f:
             f.write("# KOSMO target cost budget (tests/target_budget.py): instructions in the loops of each\n"
-                    f"# function in build/felucca.dis, x{NEST} per nesting level, divides x{1 + DIV_W}. The check allows "
+                    f"# function in build/kosmo.dis, x{NEST} per nesting level, divides x{1 + DIV_W}. The check allows "
                     f"+{TOL * 100:.0f} %.\n# Rewritten by BUDGET_UPDATE=1.\n")
             for n, r in res.items():
                 if n not in OPTIONAL:

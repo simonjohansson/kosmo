@@ -1,5 +1,5 @@
 # KOSMO target cost budget (tests/target_budget.py): instructions in the loops of each
-# function in build/felucca.dis, x4 per nesting level, divides x9. The check allows +10 %.
+# function in build/kosmo.dis, x4 per nesting level, divides x9. The check allows +10 %.
 # Rewritten by BUDGET_UPDATE=1.
 wave_render 116
 fm1_alnk0_irq 1828

@@ -252,7 +252,7 @@ def errors():
     plain = pkgfile("plain.fwsc", package(marker=False))
     dev = FakeFM1(image)
     rc, out, err = cli([plain, "--yes"], dev)
-    ok(rc == 2 and "no Felucca update loader" in err and dev.sent == [], "package without the loader marker -> exit 2, no MIDI")
+    ok(rc == 2 and "no Kosmo update loader" in err and dev.sent == [], "package without the loader marker -> exit 2, no MIDI")
     dev = FakeFM1(I.logical_image(package(marker=False)))
     rc, out, err = cli([plain, "--yes", "--force"], dev)
     ok(rc == 0 and dev.bad == 0, "... installs with --force")

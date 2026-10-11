@@ -50,7 +50,7 @@ SDK_SHA256 = {
 }
 
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY
-VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
+VERSION = None                      # KOSMO_VERSION for release builds (default: firmware/src/kosmo.c)
 
 
 def toolchain():
@@ -187,36 +187,36 @@ def ld_regions():
 
 def build_app():
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
-    for flag in ("FELUCCA_FLASH", "FELUCCA_OTA", "FELUCCA_OTA_DRYRUN", "FELUCCA_OTA_RAMONLY", "FELUCCA_CDC",
-                 "FELUCCA_UART", "FELUCCA_UAC", "FELUCCA_UAC_TONE", "FELUCCA_UAC_48K",
-                 "FELUCCA_CDC_DEFAULT", "FELUCCA_UAC_AS_FIRST"):
-        v = os.environ.get(flag)    # unset: the default in firmware/src/felucca.c
+    for flag in ("KOSMO_FLASH", "KOSMO_OTA", "KOSMO_OTA_DRYRUN", "KOSMO_OTA_RAMONLY", "KOSMO_CDC",
+                 "KOSMO_UART", "KOSMO_UAC", "KOSMO_UAC_TONE", "KOSMO_UAC_48K",
+                 "KOSMO_CDC_DEFAULT", "KOSMO_UAC_AS_FIRST"):
+        v = os.environ.get(flag)    # unset: the default in firmware/src/kosmo.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
-    v = os.environ.get("FELUCCA_USB_LAYOUT")   # firmware/src/usb.c: how the USB composite presents itself (#67), 0..3
+    v = os.environ.get("KOSMO_USB_LAYOUT")   # firmware/src/usb.c: how the USB composite presents itself (#67), 0..3
     if v in ("0", "1", "2", "3"):
-        flags.append(f"-DFELUCCA_USB_LAYOUT={v}")
-    flags.append(f'-DFELUCCA_ID="{PRODUCT}"')
+        flags.append(f"-DKOSMO_USB_LAYOUT={v}")
+    flags.append(f'-DKOSMO_ID="{PRODUCT}"')
     if VERSION:
-        flags.append(f'-DFELUCCA_VERSION="{VERSION}"')
-    # felucca.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
-    # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. FELUCCA_SIZE=0: -Os everywhere
-    size = os.environ.get("FELUCCA_SIZE") != "0"
+        flags.append(f'-DKOSMO_VERSION="{VERSION}"')
+    # kosmo.c goes to LLVM IR without the optimizer, the main-loop functions (UI, stores, editor) are
+    # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. KOSMO_SIZE=0: -Os everywhere
+    size = os.environ.get("KOSMO_SIZE") != "0"
     cmain = (("cc", *flags, "-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns", "-c",
-              FW / "src" / "felucca.c", "-o", OUT / "felucca.ll") if size else
-             ("cc", *flags, "-c", FW / "src" / "felucca.c", "-o", OUT / "felucca.o"))
+              FW / "src" / "kosmo.c", "-o", OUT / "kosmo.ll") if size else
+             ("cc", *flags, "-c", FW / "src" / "kosmo.c", "-o", OUT / "kosmo.o"))
     tc_all(("cc", "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
            ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
            ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
            cmain)
     if size:
-        subprocess.run([sys.executable, SRC / "tools" / "size_fns.py", OUT / "felucca.ll", OUT / "felucca_size.ll"],
+        subprocess.run([sys.executable, SRC / "tools" / "size_fns.py", OUT / "kosmo.ll", OUT / "kosmo_size.ll"],
                        check=True)
         tc("cc", *[f for f in flags if not f.startswith(("-I", "-D", "-W"))], "-c",
-           OUT / "felucca_size.ll", "-o", OUT / "felucca.o")
-    elf = OUT / "felucca.elf"
+           OUT / "kosmo_size.ll", "-o", OUT / "kosmo.o")
+    elf = OUT / "kosmo.elf"
     tc("pi32v2/bin/ld", "-T", FW / "app.ld", OUT / "crt0.o", OUT / "fm1_vec.o", OUT / "fm1_isr.o",
-       OUT / "felucca.o", "-o", elf)
+       OUT / "kosmo.o", "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
@@ -225,7 +225,7 @@ def build_app():
                                ("common/bin/objdump", "-t", elf),
                                ("common/bin/objdump", "-d", elf),
                                ("common/bin/objdump", "-d", "-j", ".ram_text", elf))
-    (OUT / "felucca.dis").write_text(dis)
+    (OUT / "kosmo.dis").write_text(dis)
 
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)

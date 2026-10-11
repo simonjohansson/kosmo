@@ -19,7 +19,7 @@ static void fm1_audio_ack_half(void) { host_acks++; }
 static void fm1_audio_init(int32_t *b, uint32_t n, void (*isr)(void), uint32_t p)
 { (void)b; (void)n; (void)isr; (void)p; }
 void isr_alnk0(void) {}
-#define FELUCCA_UAC 1                                  /* audio.c taps USB audio: here into host_tap */
+#define KOSMO_UAC 1                                  /* audio.c taps USB audio: here into host_tap */
 static int32_t host_tap[2 * 64];
 static uint32_t host_tap_n;
 static void uac_tap(const int32_t *out, uint32_t n) { memcpy(host_tap, out, 8u * n); host_tap_n = n; }

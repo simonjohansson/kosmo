@@ -7,12 +7,12 @@
  * writes the app area only (ldr_core.c). The UBOOT soft key works here too.
  * Single compilation unit. */
 #include <stdint.h>
-#define FELUCCA_LOADER 1
-#define FELUCCA_CDC 0
-#define FELUCCA_OTA 1
-#define FELUCCA_OTA_DRYRUN 0
-#define FELUCCA_USB_PID 0x0002
-#define FELUCCA_ID "ota-FM-1_900"
+#define KOSMO_LOADER 1
+#define KOSMO_CDC 0
+#define KOSMO_OTA 1
+#define KOSMO_OTA_DRYRUN 0
+#define KOSMO_USB_PID 0x0002
+#define KOSMO_ID "ota-FM-1_900"
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 #include "fm1_time.h"
 #include "fm1_sys.h"

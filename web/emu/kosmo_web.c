@@ -4,7 +4,7 @@
  * flash handed back before boot) follows X0X's browser build, web/emu/x0x_web.c of charlesvestal/fm1-x0x
  * (GPL-3.0), a Felucca fork. */
 /* Kosmo in the browser: the firmware's sources, as the host tests build them (tests/hostsim.c: libc,
- * engine, voices, FX, keys and MIDI; then the placeholder UI, main.c and storage, in src/felucca.c's order),
+ * engine, voices, FX, keys and MIDI; then the placeholder UI, main.c and storage, in src/kosmo.c's order),
  * compiled to WebAssembly and run in an AudioWorklet against a simulated FM-1:
  *   - the device clock: TIMER4 ticks (24 MHz) and fm1_ms advance with the audio the worklet asks for; the
  *     audio ISR (audio.c fm1_alnk0_irq, the real one) renders each I2S half (HALF_FRAMES) as the DMA would
@@ -17,17 +17,17 @@
  *     gives them back at boot.
  * Not here: USB (MIDI, audio, the editor, updates), TRS MIDI, the serial console, the battery (full), the
  * crash / UBOOT paths. Nothing of the firmware changes for this file.
- *   web/emu/build.sh  ->  build/emu/{felucca.wasm, worklet.js, index.html} */
+ *   web/emu/build.sh  ->  build/emu/{kosmo.wasm, worklet.js, index.html} */
 #include <stdint.h>
 
-#define FELUCCA_WEB 1
-#define FELUCCA_CDC 0
-#define FELUCCA_FLASH 1
-#define FELUCCA_OTA 0
-#define FELUCCA_UAC 0
-#define FELUCCA_UART 0
-#ifndef FELUCCA_VERSION
-#define FELUCCA_VERSION "WEB"
+#define KOSMO_WEB 1
+#define KOSMO_CDC 0
+#define KOSMO_FLASH 1
+#define KOSMO_OTA 0
+#define KOSMO_UAC 0
+#define KOSMO_UART 0
+#ifndef KOSMO_VERSION
+#define KOSMO_VERSION "WEB"
 #endif
 
 static uint8_t nor[0x100000];            /* the SPI NOR (erased: 0xFF) */

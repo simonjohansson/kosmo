@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
-// The browser build (build/emu/felucca.wasm, web/emu/felucca_web.c) in Node, as the worklet runs it. After X0X's
+// The browser build (build/emu/kosmo.wasm, web/emu/kosmo_web.c) in Node, as the worklet runs it. After X0X's
 // tests/host/emu_test.mjs (charlesvestal/fm1-x0x, GPL-3.0).
-//   node web/emu/emu_test.mjs build/emu/felucca.wasm [NATIVE.f32]
+//   node web/emu/emu_test.mjs build/emu/kosmo.wasm [NATIVE.f32]
 // Checks: it boots (the KOSMO screen; the power-on LED sweep under the splash, over by 1 s), a held key sounds, MIDI
 // plays, OCT-/OCT+ shift the octave, the MASTER pot at 0 is silent; the same gestures twice give the same audio
 // (deterministic), with NATIVE.f32 (web/emu/native_check.c) the native build's, bit for bit.
@@ -10,7 +10,7 @@
 // above half of real time on this machine).
 import fs from "fs";
 
-const wasmPath = process.argv[2] || "build/emu/felucca.wasm", nativePath = process.argv[3];
+const wasmPath = process.argv[2] || "build/emu/kosmo.wasm", nativePath = process.argv[3];
 const bytes = fs.readFileSync(wasmPath);
 const B = { FX: 0, SCL: 1, ENV: 2, LFO: 3, EDIT: 4, GLO: 5, HOME: 6, SAVE: 7, ARP: 8, SEQ: 9, PLAY: 10, REC: 11, OCTDN: 12, OCTUP: 13 };
 let fails = 0;

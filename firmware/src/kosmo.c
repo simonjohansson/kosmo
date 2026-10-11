@@ -4,37 +4,37 @@
  * define, so the order matters. */
 
 /* ---------------------------------------------------- build options --- */
-/* build.py: FELUCCA_<NAME>=0 / 1 in the environment overrides these. Elsewhere: FELUCCA_SLICE, FELUCCA_FM4
- * FELUCCA_OTA_RAMONLY (ota.c). */
-#ifndef FELUCCA_FLASH
-#define FELUCCA_FLASH 1          /* flash driver + storage.c: the settings */
+/* build.py: KOSMO_<NAME>=0 / 1 in the environment overrides these. Elsewhere: KOSMO_SLICE, KOSMO_FM4
+ * KOSMO_OTA_RAMONLY (ota.c). */
+#ifndef KOSMO_FLASH
+#define KOSMO_FLASH 1          /* flash driver + storage.c: the settings */
 #endif
-#ifndef FELUCCA_OTA
-#define FELUCCA_OTA 1            /* M-UPGRADE update entry; needs FELUCCA_FLASH */
+#ifndef KOSMO_OTA
+#define KOSMO_OTA 1            /* M-UPGRADE update entry; needs KOSMO_FLASH */
 #endif
-#ifndef FELUCCA_OTA_DRYRUN
-#define FELUCCA_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
+#ifndef KOSMO_OTA_DRYRUN
+#define KOSMO_OTA_DRYRUN 0     /* 1 = stage, ask "success", then undo: no record, no reset */
 #endif
-#ifndef FELUCCA_CDC
-#define FELUCCA_CDC 0            /* USB CDC-ACM serial console (the console is gone: leave 0) */
+#ifndef KOSMO_CDC
+#define KOSMO_CDC 0            /* USB CDC-ACM serial console (the console is gone: leave 0) */
 #endif
-#ifndef FELUCCA_UAC
-#define FELUCCA_UAC 1            /* USB audio input: the master output, 16-bit stereo 44.1 kHz (usb.c) */
+#ifndef KOSMO_UAC
+#define KOSMO_UAC 1            /* USB audio input: the master output, 16-bit stereo 44.1 kHz (usb.c) */
 #endif
-#ifndef FELUCCA_UAC_TONE
-#define FELUCCA_UAC_TONE 0       /* bench: the USB input sends test triangles instead of the music */
+#ifndef KOSMO_UAC_TONE
+#define KOSMO_UAC_TONE 0       /* bench: the USB input sends test triangles instead of the music */
 #endif
-#ifndef FELUCCA_UART
-#define FELUCCA_UART 1           /* TRS MIDI IN on UART1 / PH8 */
+#ifndef KOSMO_UART
+#define KOSMO_UART 1           /* TRS MIDI IN on UART1 / PH8 */
 #endif
-#ifndef FELUCCA_ID
-#define FELUCCA_ID "FM-1_900"    /* package identity (build.py: the .fwsc marker string) */
+#ifndef KOSMO_ID
+#define KOSMO_ID "FM-1_900"    /* package identity (build.py: the .fwsc marker string) */
 #endif
-#ifndef FELUCCA_VERSION
-#define FELUCCA_VERSION "v1.5.1" /* shown on the web emulator page; build.py --release X.Y */
+#ifndef KOSMO_VERSION
+#define KOSMO_VERSION "v1.5.1" /* shown on the web emulator page; build.py --release X.Y */
 #endif
-#if FELUCCA_OTA && !FELUCCA_FLASH
-#error "FELUCCA_OTA needs FELUCCA_FLASH"
+#if KOSMO_OTA && !KOSMO_FLASH
+#error "KOSMO_OTA needs KOSMO_FLASH"
 #endif
 
 /* ------------------------------------------------------------- HAL --- */
@@ -65,7 +65,7 @@
 
 /* ------------------------------------------------- MIDI, keys, audio --- */
 #include "usb.c"
-#if FELUCCA_UART
+#if KOSMO_UART
 #include "midi_uart.c"
 #endif
 #include "input.c"               /* the keys, the MIDI IN queue (midi_control.c) */
@@ -77,13 +77,13 @@
 #include "icons.c"               /* the icon atlas */
 
 /* ---------------------------------------------- storage, update --- */
-#if FELUCCA_FLASH
+#if KOSMO_FLASH
 #include "fm1_flash.h"
 #include "storage_hw.c"
 #include "storage.c"
 #include "settings_persist.c"    /* settings + the learned panel table: one flash object */
 #endif
-#if FELUCCA_OTA
+#if KOSMO_OTA
 #include "ota.c"
 #include "ota_hw.c"
 #endif

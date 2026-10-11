@@ -42,20 +42,20 @@ and the version string `v1.0`; the package is `build/kosmo-1.0.fwsc`, and
 (`kosmo-1.0-app.bin`), `SHA256SUMS`, `LICENSE`, `LICENSING.md` and
 `LICENSES/` (the package contains Apache-2.0 SDK files, so the licence texts travel with it).
 
-Build options (environment, `0` or `1`; defaults in `firmware/src/felucca.c`):
+Build options (environment, `0` or `1`; defaults in `firmware/src/kosmo.c`):
 
 | Flag | Default | |
 | --- | --- | --- |
-| `FELUCCA_FLASH` | 1 | the settings in flash |
-| `FELUCCA_OTA` | 1 | update entry (needs `FELUCCA_FLASH`) |
-| `FELUCCA_CDC` | 0 | USB serial function (the console is gone; the descriptors stay) |
-| `FELUCCA_CDC_DEFAULT` | 1 | with `FELUCCA_CDC=1`: `0` leaves the serial function out of USB from boot |
-| `FELUCCA_UAC` | 1 | USB audio input (the master output, stereo, 44.1 or 48 kHz) |
-| `FELUCCA_UAC_48K` | 1 | `0`: the USB audio input at 44.1 kHz only, as up to 1.0.5.2 (`firmware/src/usb.c`) |
-| `FELUCCA_UAC_AS_FIRST` | 1 | the audio control header lists the audio streaming interface before the MIDI one, so the USB audio driver of older macOS (up to 15) finds it; `0`: 1.0 to 1.5's order, byte for byte (`firmware/src/usb.c`) |
-| `FELUCCA_UART` | 1 | TRS MIDI IN |
+| `KOSMO_FLASH` | 1 | the settings in flash |
+| `KOSMO_OTA` | 1 | update entry (needs `KOSMO_FLASH`) |
+| `KOSMO_CDC` | 0 | USB serial function (the console is gone; the descriptors stay) |
+| `KOSMO_CDC_DEFAULT` | 1 | with `KOSMO_CDC=1`: `0` leaves the serial function out of USB from boot |
+| `KOSMO_UAC` | 1 | USB audio input (the master output, stereo, 44.1 or 48 kHz) |
+| `KOSMO_UAC_48K` | 1 | `0`: the USB audio input at 44.1 kHz only, as up to 1.0.5.2 (`firmware/src/usb.c`) |
+| `KOSMO_UAC_AS_FIRST` | 1 | the audio control header lists the audio streaming interface before the MIDI one, so the USB audio driver of older macOS (up to 15) finds it; `0`: 1.0 to 1.5's order, byte for byte (`firmware/src/usb.c`) |
+| `KOSMO_UART` | 1 | TRS MIDI IN |
 
-`FELUCCA_USB_LAYOUT` (`0` to `3`, default `0`) picks other USB descriptor layouts for testing; see
+`KOSMO_USB_LAYOUT` (`0` to `3`, default `0`) picks other USB descriptor layouts for testing; see
 `firmware/src/usb.c`.
 
 ## Browser emulator
@@ -66,8 +66,8 @@ web/emu/build.sh
 python3 -m http.server -d build/emu 8790     # open http://localhost:8790/
 ```
 
-`web/emu/felucca_web.c` builds the firmware's sources as the host tests do, against a simulated FM-1, and
-Emscripten compiles it to WebAssembly (`build/emu/felucca.wasm`, with `index.html`, `worklet.js` and the font in `fonts/`). The page
+`web/emu/kosmo_web.c` builds the firmware's sources as the host tests do, against a simulated FM-1, and
+Emscripten compiles it to WebAssembly (`build/emu/kosmo.wasm`, with `index.html`, `worklet.js` and the font in `fonts/`). The page
 keeps the flash's storage sectors (the settings) in the browser. Not emulated: USB (audio, MIDI out, updates) and
 TRS MIDI.
 

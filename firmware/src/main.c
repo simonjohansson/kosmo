@@ -33,7 +33,7 @@ void fm1_timer5_irq(void)
     }
     if (usb_due)
         owed |= 1u;                             /* 2 kHz: all USB SIE traffic lives here */
-#if FELUCCA_UART
+#if KOSMO_UART
     if (sub % 5u == 2u)
         owed |= 2u;                             /* 2 kHz: <= ~7 bytes per call at 31250 baud */
 #endif
@@ -41,7 +41,7 @@ void fm1_timer5_irq(void)
         sub = 0;
     if (felucca_dbg.in_audio) {
         felucca_dbg.nested++;
-#if FELUCCA_UAC
+#if KOSMO_UAC
         if (usb_due)
             uac_service();
 #endif
@@ -50,7 +50,7 @@ void fm1_timer5_irq(void)
     }
     if (owed & 1u)
         usb_poll();
-#if FELUCCA_UART
+#if KOSMO_UART
     if (owed & 2u)
         uart_midi_poll();
 #endif
@@ -132,7 +132,7 @@ static void fm1_main(void)
 {
     uint32_t ms;
     persist_boot();
-#if FELUCCA_OTA
+#if KOSMO_OTA
     if (flash_ok)
         ota_boot_cleanup();                             /* staging area left by an update */
 #endif
@@ -158,7 +158,7 @@ static void fm1_main(void)
     kb_boot_hold = 1;                         /* #137: no notes from the keys before the UI (input.c keyboard_block) */
     audio_init();
     usb_start();
-#if FELUCCA_UART
+#if KOSMO_UART
     uart_midi_init();
 #endif
     boot_leds();
@@ -201,7 +201,7 @@ static void fm1_main(void)
                 fm1_enter_uboot();
             }
         }
-#if FELUCCA_OTA
+#if KOSMO_OTA
         ota_service();                                  /* M-UPGRADE handshake */
         if (usb.ota_req) {                              /* M-UPGRADE upgrade command */
             usb.ota_req = 0;
