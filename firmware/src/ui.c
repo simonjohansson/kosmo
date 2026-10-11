@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* The kids' UI: four pages, one function button each (its LED is lit while the page shows):
- *   HOME WAVE (wave, scan) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX SPACE (amount, size)
+ *   HOME WAVE (wave, scan, fat, detune) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX SPACE (amount, size)
  * K1..K4 turn the bars at the bottom. OCT-/OCT+ shift the keys (both together: back to the middle).
  * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in two 240 x 120
  * strips (cv_oy shifts screen coordinates into the strip) and only when something it shows has changed. */
@@ -14,7 +14,8 @@
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[4] = {
-    {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4}}},
+    {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
+                                          {"Fat", &trk[0].p[P_E4], 4, 1}, {"Detune", &trk[0].p[P_DETUNE], 127, 4}}},
     {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 4, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
     {B_ENV, "ENV", RGB(60, 230, 255), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
@@ -52,7 +53,7 @@ static void disc(int32_t cx, int32_t cy, int32_t r, int32_t t, uint16_t c)
 }
 
 /* ------------------------------------------------------- pictures --- */
-static int16_t pt[200][2];                  /* a glowing line's points (WAVE's are filled once for both strips) */
+static int16_t pt[200][2];                  /* a glowing line's points (WAVE's are filled per layer) */
 
 /* a phosphor line through n points: a wide dim halo, a narrower one, then the bright core (pass by pass, so cores stay on top) */
 static void glow_pts(int32_t n, uint16_t c)
@@ -84,8 +85,26 @@ static void graticule(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
         cv_rect(x + i * w / 10, y, 1, h, g);
 }
 
+/* layer c of the FAT stack (0 = front): one step further back = up, right, smaller, phase-shifted by DETUNE (sides alternate) */
+static void wave_layer(int32_t c)
+{
+    int32_t i, amp = 46 * (100 - 6 * c) / 100, sh = (c + 1) / 2 * trk[0].p[P_DETUNE] / 6 * (c & 1 ? 1 : -1);
+    for (i = 0; i < 128; i++) {
+        pt[i][0] = (int16_t)(PX + 10 + i * 200 / 127 + 3 * c);
+        pt[i][1] = (int16_t)(PY + PH / 2 - 5 * c - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2 + sh) * amp) >> 15));
+    }
+}
+
 static void pic_wave(void)
 {
+    static const uint8_t M[5] = {100, 62, 46, 34, 26};
+    int32_t c, i;
+    for (c = trk[0].p[P_E4]; c > 0; c--) {      /* back to front, no halo */
+        wave_layer(c);
+        for (i = 0; i < 127; i++)
+            cv_line_t(pt[i][0], pt[i][1], pt[i + 1][0], pt[i + 1][1], ux_mix(0, PG[0].bg, M[c]), 3);
+    }
+    wave_layer(0);
     glow_pts(128, PG[0].bg);
 }
 
@@ -182,10 +201,6 @@ static void ui_draw(void)
     if (ux.mono) {                             /* the GREY palette mixes to grey: these pages are in colour */
         ux.mono = 0;
         ux.gen++;
-    }
-    for (i = 0; !ui_page && i < 128; i++) {   /* the scanned frame, once for both strips */
-        pt[i][0] = (int16_t)(PX + 10 + i * 200 / 127);
-        pt[i][1] = (int16_t)(PY + PH / 2 - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2) * 46) >> 15));
     }
     for (y0 = 0; y0 < 240u; y0 += 120u) {
         cv_begin(240, 120, 0);

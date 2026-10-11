@@ -8,10 +8,11 @@ typedef struct {
     uint8_t env[4];              /* ATK DEC SUS REL */
     uint8_t rev, rsize, voice;
     int8_t fenv;
+    uint8_t fat, detune;         /* FAT copies, DETUNE */
 } preset_t;
 
 static const preset_t PRESETS[] = {
-    {"SPACE WHALE", {1, 30, 60, 40}, 0, {90, 90, 110, 100}, 110, 127, V_POLY, 10},
+    {"SPACE WHALE", {1, 30, 60, 40}, 0, {90, 90, 110, 100}, 110, 127, V_POLY, 10, 2, 60},
     {"LASER CAT", {7, 127, 100, 90}, 1, {0, 50, 20, 30}, 20, 40, V_LEGATO, 48},
     {"ROBOT DOG", {0, 40, 90, 30}, 0, {4, 70, 100, 50}, 20, 30, V_LEGATO, 20},
     {"MAGIC BELLS", {2, 90, 70, 20}, 2, {0, 88, 0, 60}, 90, 100, V_POLY, 30},
@@ -30,6 +31,8 @@ static void preset_load(uint32_t i)
         trk[0].p[P_E0 + k] = s->e[k];
         trk[0].p[P_ATK + k] = s->env[k];
     }
+    trk[0].p[P_E4] = s->fat;
+    trk[0].p[P_DETUNE] = s->detune;
     trk[0].p[P_FTYPE] = s->ftype;
     trk[0].p[P_REV] = s->rev;
     trk[0].p[P_VOICE] = s->voice;

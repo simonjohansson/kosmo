@@ -21,7 +21,7 @@ PAGE = {"HOME": "h", "EDIT": "f5", "ENV": "p", "FX": "f1"}
 KNOB = [("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")]
 PRESETS, NOTE = ("f13", "f14"), "z"
 # page -> how many knobs it uses (ui.c PG[])
-USES = {"HOME": 2, "EDIT": 3, "ENV": 4, "FX": 2}
+USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "FX": 2}
 
 
 def script():

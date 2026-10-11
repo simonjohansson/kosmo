@@ -21,6 +21,7 @@ static const param_desc_t TP[P_COUNT] = {
     [P_DETUNE] = PD("DTUNE", F_INT, 0, 127, 40),
     [P_PAN] = PD("PAN", F_BIPCT, -64, 63, 0),
     [P_MUTE] = PD("MUTE", F_ENUM, 0, 1, 0),
+    [P_E4] = PD("FAT", F_INT, 0, 4, 0),          /* WAVE: extra unison copies per note */
     [P_FTYPE] = PD("TYPE", F_ENUM, 0, 4, 0),       /* LP BP HP NOTCH COMB */
 };
 

@@ -10,4 +10,5 @@ cpu/filter/BP 947
 cpu/filter/HP 948
 cpu/filter/NOTCH 947
 cpu/filter/COMB 711
+cpu/fat4 922
 cpu/mix/idle 167

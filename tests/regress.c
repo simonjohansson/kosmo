@@ -191,7 +191,8 @@ static void job_mode(const job_t *j)            /* arg: the voice mode, glide on
     track_t *t = &trk[0];
     host_tracks_init();
     host_sound(t, j->pi);
-    t->p[P_VOICE] = j->arg;
+    t->p[P_VOICE] = j->arg & 3u;
+    t->p[P_E4] = j->arg >> 2;                       /* FAT, for the POLY entry */
     t->p[P_GLIDE] = j->arg == V_MONO || j->arg == V_LEGATO ? 30 : 0;
     t->p[P_DETUNE] = 40;
     phrase(t, 60);
@@ -282,7 +283,9 @@ static void job_cpu(const job_t *j)
     host_sound(&trk[0], j->pi);
     trk[0].p[P_VOICE] = V_POLY;
     trk[0].p[P_SUS] = 127;
-    trk[0].p[P_FTYPE] = j->arg;
+    trk[0].p[P_FTYPE] = j->arg & 7u;
+    trk[0].p[P_E4] = j->arg >> 3;                   /* FAT */
+    trk[0].p[P_DETUNE] = 60;
     for (i = 0; i < j->cpu_notes; i++)
         trk_note_on(&trk[0], NOTES[i], 100);
     for (k = 0; k < nb / 2u + nb; k++) {
@@ -612,6 +615,36 @@ static int chk_reverb(char *msg, uint32_t n)
     return early > LIM_TAIL && R.tail_peak <= LIM_TAIL && !R.over;
 }
 
+static uint32_t mode_release_gates(void);
+/* FAT n: n extra copies per note, spread by DETUNE (none at DETUNE 0); FAT 0 is one voice */
+static int chk_fat(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t f, bad = 0, i, spread;
+    for (f = 0; f <= 4u; f++) {
+        for (spread = 0; spread < 2u; spread++) {
+            int32_t lo = 0, hi = 0;
+            host_tracks_init();
+            t->p[P_E4] = (int16_t)f;
+            t->p[P_DETUNE] = spread ? 60 : 0;
+            trk_note_on(t, 60, 100);
+            bad += voices_busy() != 1u + f;
+            for (i = 0; i < NVOICE; i++)
+                if (t->v[i].active) {
+                    lo = t->v[i].fine < lo ? t->v[i].fine : lo;
+                    hi = t->v[i].fine > hi ? t->v[i].fine : hi;
+                }
+            bad += (f > 1u && spread) != (lo < 0 && hi > 0);   /* copies on both sides of the lead, only with DETUNE */
+            bad += !spread && (lo || hi);
+            trk_note_off(t, 60);
+            bad += mode_release_gates() != 0;
+            run_to(fpos + 2u * FS);                   /* let the tails die: the next case counts from 0 */
+        }
+    }
+    snprintf(msg, n, "FAT 0..4: 1 + FAT voices per note, spread both ways by DETUNE, all released (%u wrong)", bad);
+    return !bad;
+}
+
 /* every factory preset loads, plays (not silent) and renders differently from all the others */
 static int chk_presets(char *msg, uint32_t n)
 {
@@ -921,6 +954,7 @@ int main(int argc, char **argv)
             j->pi = REV_S[i];
             j->arg = (uint8_t)k0;
         }
+    add(J_MODE, "mode/ROBOT_LEAD/FAT4")->arg = 4u << 2;      /* POLY, FAT 4 */
     add(J_KEYS, "keys/octave");
     add(J_MIDI, "midi/notes_bend_sustain");
     g1 = nj;
@@ -940,6 +974,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
+    add(J_CHECK, "wave: FAT copies and DETUNE")->check = chk_fat;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     run_jobs(J, nj, jobs_at_once);
 
@@ -959,6 +994,12 @@ int main(int argc, char **argv)
         snprintf(name, sizeof name, "cpu/filter/%s", FN[i]);
         j = add(J_CPU, name);
         j->arg = (uint8_t)i;
+        j->cpu_notes = 8;
+        j->own = 1;
+    }
+    {
+        job_t *j = add(J_CPU, "cpu/fat4");              /* FAT 4 fills the same 8-voice pool: no dearer than 8 notes */
+        j->arg = 4u << 3;
         j->cpu_notes = 8;
         j->own = 1;
     }

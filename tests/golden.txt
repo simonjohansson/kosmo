@@ -51,5 +51,6 @@ reverb/BELLS/send40 c3504986e0a02a64
 reverb/BELLS/send127 aff13f89342acf1c
 reverb/BELLS/big_bright f9585537d1aa5e00
 reverb/BELLS/small_dark 25f8a4bcf56e50cc
+mode/ROBOT_LEAD/FAT4 b47cfcc2a4c54984
 keys/octave ed2ca5ec446503c4
 midi/notes_bend_sustain ba61dc42eae0c9e0

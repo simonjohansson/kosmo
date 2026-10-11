@@ -21,6 +21,14 @@ static uint32_t trk_nvoice(const track_t *t)
 
 static uint32_t trk_vmode(const track_t *t) { return (uint32_t)t->p[P_VOICE]; }
 
+/* voices per note: UNISON uses all, else 1 + FAT (P_E4, 0..4). shortcut: the copies come out of the shared
+ * 8-voice budget (only when there is room, else the oldest released voices go), so a full chord on FAT 4 thins out */
+static uint32_t trk_copies(const track_t *t)
+{
+    uint32_t f = (uint32_t)t->p[P_E4];
+    return trk_vmode(t) == V_UNISON ? trk_nvoice(t) : 1u + (f > 4u ? 4u : f);
+}
+
 /* ------------------------------------------------- the shared voice budget --- */
 static uint32_t voices_busy(void)                       /* sounding voices of all parts (not the fading ones) */
 {
@@ -226,7 +234,7 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
  * engine's voice cap, spread by DETUNE over the same width) */
 static void mono_play(track_t *t, uint32_t note, uint32_t vel, int retrig, int glide)
 {
-    uint32_t mode = (uint32_t)t->p[P_VOICE], nv = mode == V_UNISON ? trk_nvoice(t) : 1u, i;
+    uint32_t nv = trk_copies(t), i;
     for (i = 0; i < nv; i++) {
         voice_t *v = &t->v[i];
         int32_t k = 2 * (int32_t)i - (int32_t)(nv - 1u);   /* -7 .. 7 */
@@ -288,8 +296,21 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
         voice_t *v = voice_alloc(t, note);
         t->nmono = 0;                                   /* no stale mono stack after a mode change */
         t->mono_note = 0;
+        uint32_t nv = trk_copies(t), c, j;
         v->fine = 0;
-        voice_start(t, v, note, vel, t->p[P_GLIDE] != 0);
+        voice_start(t, v, note, nv == 1u ? vel : vel * 2u / (nv + 1u), t->p[P_GLIDE] != 0);
+        for (c = 1; c < nv; c++) {                      /* FAT: copies in free voices, alternating sides of the lead */
+            static uint32_t seed = 0x2345679u;
+            voice_t *x = 0;
+            for (j = 0; j < NVOICE && !x; j++)
+                x = !t->v[j].active ? &t->v[j] : 0;
+            if (!x || !voice_room(t, 1))
+                break;
+            x->fine = (int32_t)((c + 1u) / 2u) * 3 * (c & 1u ? 1 : -1) * t->p[P_DETUNE] * 56 / 889;
+            voice_start(t, x, note, vel * 2u / (nv + 1u), 0);
+            seed = seed * 1664525u + 1013904223u;
+            x->ph[0] += seed;                           /* random phases: in phase they only get louder */
+        }
         return;
     }
     {
@@ -313,7 +334,7 @@ static void trk_note_off(track_t *t, uint32_t note)
     uint32_t i, mode = trk_vmode(t);
     mono_remove(t, note);                              /* a mode change must not retain a released key */
     if (mode != V_POLY) {
-        uint32_t nv = mode == V_UNISON ? trk_nvoice(t) : 1u;
+        uint32_t nv = trk_copies(t);
         if (t->mono_note == note) {
             uint32_t next = mono_pick(t);
             if (next) {                                 /* fall back to a held note, legato */
