@@ -64,9 +64,9 @@ def zap(t):                                                   # CZ resonance: a 
 
 def chiptune(t):
     f = round(t * 63)
-    if f < 24:                                                # pulse widths in 1/16 steps, 8 of them, 3 frames each
-        w = 8 - f // 3
-        return [1.0 if (i * 16 // N) < w else -1.0 for i in range(N)]
+    if f < 24:                                                # the pulse width shrinks 8/16 -> 1/16 a frame at a time (edge sample partial)
+        w = (8 - 7 * f / 23) * N / 16
+        return [clip01(w - i) * 2 - 1 for i in range(N)]
     if f < 40:                                                # NES triangle bit-crushed 32 -> 3 levels
         q = round(32 * (3 / 32) ** ((f - 24) / 15))
         return [round(tri(i / N) * q / 2) for i in range(N)]
@@ -129,31 +129,85 @@ def space_organ(t):                                           # drawbars on 1 2 
     return add({h: (lerp(int(R[k][j]), int(R[k + 1][j]), u) / 8, 0.05 * j) for j, h in enumerate(D)})
 
 
-def wild(t):                                                  # a new random spectrum every two frames
+def wild(t):                                                  # a new random spectrum every four frames
     f = round(t * 63)
     def key(n):
         rnd = random.Random(1000 + n)
         return {rnd.randint(1, 30): rnd.uniform(.3, 1) for _ in range(rnd.randint(2, 6))}
-    k, u = divmod(f, 2)
+    k, u = divmod(f, 4)
     a, b = key(k), key(k + 1)
     ph = random.Random(5)
-    return add({h: (lerp(a.get(h, 0), b.get(h, 0), u / 2), ph.random()) for h in range(1, 31)})
+    return add({h: (lerp(a.get(h, 0), b.get(h, 0), u / 4), ph.random()) for h in range(1, 31)})
 
 
 TABLES = [("ROBOT TALK", robot_talk), ("LASER", laser), ("MONSTER", monster), ("ZAP", zap), ("CHIPTUNE", chiptune),
           ("ALIEN", alien), ("BUBBLES", bubbles), ("CRYSTAL", crystal), ("DRAGON", dragon), ("GHOST", ghost),
           ("SPACE ORGAN", space_organ), ("WILD", wild)]
+WARPED = {"LASER", "MONSTER", "SPACE ORGAN"}                  # smooth in t, so the frames can be re-spaced; the others step on f by design
 
 
-def frames(fn):                                               # 64 frames, DC removed, peak-normalised, as ints
-    out = []
+def prep(s):                                                  # DC removed, peak-normalised
+    m = sum(s) / N
+    s = [v - m for v in s]
+    pk = max(abs(v) for v in s)
+    return [v / pk * PEAK for v in s]
+
+
+def spec(s, hmax=24):                                         # complex harmonics 1..hmax
+    return [complex(sum(s[i] * SIN[(h * i + N // 4) % N] for i in range(N)), -sum(s[i] * SIN[h * i % N] for i in range(N)))
+            for h in range(1, hmax + 1)]
+
+
+def sdist(a, b):                                              # spectral distance of magnitudes, relative to the louder
+    return math.sqrt(sum((abs(x) - abs(y)) ** 2 for x, y in zip(a, b)) / max(sum(abs(x) ** 2 for x in a), sum(abs(y) ** 2 for y in b)))
+
+
+def warp(fn):                                                 # t for each frame: half uniform, half equal spectral steps
+    G = 3 * FRAMES
+    sp = [spec(prep(fn(g / (G - 1))), 16) for g in range(G)]
+    c = [0.0]
+    for a, b in zip(sp, sp[1:]):
+        c.append(c[-1] + sdist(a, b))
+    u = [0.5 * g / (G - 1) + 0.5 * c[g] / c[-1] for g in range(G)]
+    ts, g = [], 0
     for f in range(FRAMES):
-        s = fn(f / (FRAMES - 1))
-        m = sum(s) / N
-        s = [v - m for v in s]
-        pk = max(abs(v) for v in s)
-        out.append([round(v / pk * PEAK) for v in s])
-    return out
+        while g < G - 2 and u[g + 1] < f / (FRAMES - 1):
+            g += 1
+        w = clip01((f / (FRAMES - 1) - u[g]) / (u[g + 1] - u[g])) if u[g + 1] > u[g] else 0
+        ts.append((g + w) / (G - 1))
+    return ts
+
+
+def cjump(A, B, k=8):                                         # largest step of the spectral centroid along the blend A -> B
+    best, prev = 0.0, None
+    for j in range(k + 1):
+        m = [abs(x + (y - x) * j / k) for x, y in zip(A, B)]
+        c = sum((h + 1) * v for h, v in enumerate(m)) / sum(m)
+        best = max(best, abs(c - prev)) if prev is not None else best
+        prev = c
+    return best
+
+
+def align(p, A, s):                                           # rotate s to line its low harmonics up with those of A (the spectrum of p, the
+    B = spec(s, 32)                                           # previous frame), unless the blend's centroid is smoother as is (or p is far off)
+    x = [a.conjugate() * b for a, b in zip(A, B)]             # the shift k that maximises sum Re(x_h e^{i h k tau / N})
+    k = max(range(N), key=lambda k: sum((v * complex(math.cos(TAU * (h + 1) * k / N), math.sin(TAU * (h + 1) * k / N))).real
+                                        for h, v in enumerate(x)))
+    R = [b * complex(math.cos(TAU * (h + 1) * k / N), math.sin(TAU * (h + 1) * k / N)) for h, b in enumerate(B)]
+    r = s[k:] + s[:k]
+    return (r, R) if cjump(A, R) < cjump(A, B) or jump(p, s) > 1.0 > jump(p, r) else (s, B)
+
+
+def frames(fn, warped=False):                                 # 64 frames: phase-aligned to the one before, equal RMS where the peak allows
+    ts = warp(fn) if warped else [f / (FRAMES - 1) for f in range(FRAMES)]
+    out, sp = [], None
+    for t in ts:
+        s = prep(fn(t))
+        s, sp = align(out[-1], sp, s) if sp else (s, spec(s, 32))
+        out.append(s)
+    rms = lambda s: math.sqrt(sum(v * v for v in s) / N)
+    target = sorted(map(rms, out))[FRAMES // 2]               # the median frame's level
+    return [[round(v * min(target / rms(s), PEAK / max(map(abs, s)))) for v in s] for s in out]
 
 
 def jump(a, b):                                               # rms of the difference, relative to the louder frame's rms
@@ -167,9 +221,9 @@ def main(path):
     out = ["/* generated by tools/gen_waves.py */", "#pragma once", "#include <stdint.h>", f"#define NWAVES {len(TABLES)}",
            f"#define WAVE_FRAMES {FRAMES}", f"static const int16_t WAVES[NWAVES][WAVE_FRAMES][{N}] = {{"]
     for name, fn in TABLES:
-        fr = frames(fn)
+        fr = frames(fn, name in WARPED)
         for f, s in enumerate(fr):
-            assert max(map(abs, s)) >= PEAK - 1 and abs(sum(s)) <= N, f"{name} frame {f}: not normalised / DC-free"
+            assert max(map(abs, s)) <= PEAK and abs(sum(s)) <= N, f"{name} frame {f}: too loud / not DC-free"
             if f:
                 assert jump(fr[f - 1], s) <= JUMP_MAX, f"{name} frame {f}: jump {jump(fr[f - 1], s):.2f}"
         out.append(f" {{ /* {name} */")

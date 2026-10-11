@@ -347,6 +347,8 @@ static void ui_input(void)
         const kn_t *k = &PG[ui_page].k[i];
         if (!s || !k->v)
             continue;
+        if (k->v == &trk[0].p[P_E1])            /* SCAN: n steps in one pass sweep n * n (a fast turn crosses the table) */
+            s *= s < 0 ? -s : s;
         v = *k->v + s * k->step;
         *k->v = (int16_t)(v < 0 ? 0 : v > k->max ? k->max : v);
     }

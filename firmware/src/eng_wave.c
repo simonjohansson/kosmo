@@ -2,7 +2,8 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* WAVE: one wavetable oscillator through a Moog ladder filter (LP / BP / HP / NOTCH) or a comb (P_FTYPE).
  * WAVE picks one of 12 tables, SCAN moves through its 64 frames (each table a designed morph), CUT and RES set the filter.
- * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). SCAN, CUT and RES are smoothed once per block. */
+ * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). CUT and RES are smoothed once per block; SCAN glides (~45 ms) in Q16,
+ * and ENV -> SCAN (P_ED_SHP) adds the note's envelope to it. */
 #include "kosmo_waves.h"
 
 /* the order of TABLES in tools/gen_waves.py; AF_L has no lowercase, so upper case only */
@@ -67,13 +68,13 @@ int16_t wave_peek(int table, int scan, int i)
 
 static int16_t comb_buf[NVOICE][COMB_N];             /* one comb line per voice; s[7] says it is cleared */
 
-/* slots: s[0] s[1] s[4] s[5] ladder stages (kept on retrigger), s[2] s[3] s[6] smoothed CUT RES SCAN, s[7] comb valid */
+/* slots: s[0] s[1] s[4] s[5] ladder stages (kept on retrigger), s[2] s[3] smoothed CUT RES (Q8), s[6] SCAN (Q16), s[7] comb valid */
 static void wave_note_on(track_t *t, voice_t *v)
 {
     v->s[0] = v->s[1] = v->s[4] = v->s[5] = v->s[7] = 0;
     v->s[2] = t->p[P_E2] << 8;
     v->s[3] = t->p[P_E3] << 8;
-    v->s[6] = t->p[P_E1] << 8;
+    v->s[6] = t->p[P_E1] << 16;
 }
 
 static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
@@ -86,8 +87,8 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE], i;
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
-    ss += ((p[P_E1] << 8) - ss) >> 2;
-    wave_frames(p[P_E0], ss, &fa, &fb, &w);
+    ss += ((p[P_E1] << 16) - ss) >> 6;                /* a one-pole of 64 blocks (tau 43 ms): a detent is a sweep */
+    wave_frames(p[P_E0], clamp((ss >> 8) + m->shape - (64 << 8), 0, 127 << 8), &fa, &fb, &w);
     wave_blend(fa, fb, w);
     bq = (m->amp0 * VOICE_FS) >> 7;                   /* the amplitude ramp times VOICE_FS, Q8 */
     bstep = (((m->amp1 * VOICE_FS) >> 7) - bq) >> CTL_LOG2;

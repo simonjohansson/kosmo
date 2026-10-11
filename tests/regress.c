@@ -462,7 +462,7 @@ static void steps(uint32_t blocks, int32_t *maxd, double *sum)
     }
 }
 
-/* every frame of every table: peak 32000, no DC, and the next frame not far from it (the scan blends them, a jump is a click) */
+/* every frame of every table: peak at most 32000 (frames of equal RMS), no DC, and the next frame not far from it (the scan blends them, a jump is a click) */
 static int chk_wavetab(char *msg, uint32_t n)
 {
     uint32_t tb, f, i, bad = 0;
@@ -476,7 +476,7 @@ static int chk_wavetab(char *msg, uint32_t n)
                 pk = abs(a[i]) > pk ? abs(a[i]) : pk;
                 sum += a[i];
             }
-            bad += pk < 31999 || pk > 32000 || abs(sum) > 256;
+            bad += pk > 32000 || abs(sum) > 256;
             if (f + 1u < WAVE_FRAMES) {
                 const int16_t *b = WAVES[tb][f + 1];
                 for (i = 0; i < 256u; i++) {
@@ -489,7 +489,7 @@ static int chk_wavetab(char *msg, uint32_t n)
                 bad += d > 1.2;
             }
         }
-    snprintf(msg, n, "%u tables x %u frames: %u not normalised, DC-free and smooth to the next (worst step %.2f of 1.2)",
+    snprintf(msg, n, "%u tables x %u frames: %u too loud, DC-free and smooth to the next (worst step %.2f of 1.2)",
              NWAVES, WAVE_FRAMES, bad, worst);
     return !bad;
 }
@@ -535,6 +535,104 @@ static int chk_scan(char *msg, uint32_t n)
     snprintf(msg, n, "SCAN sweep, %u tables x %u frames: largest step %d (limit 2x the steady frames' own), %u tables with a click or without a change",
              NWAVES, WAVE_FRAMES, worst, bad);
     return !bad;
+}
+
+/* SCAN swept 0..127 in 2 s on a held note: the spectral centroid (in harmonics, of the 256-point frame the voices play
+ * in that block, wb_tab of eng_wave.c) of every block against the one before. Reports the largest jump per table;
+ * limit SCAN_JUMP_MAX harmonics per block (2 s over 63 frames: 47 blocks a frame); CHIPTUNE changes its kind of wave
+ * (pulse, triangle, arp, noise) at 3 frames, so it gets 0.45. */
+#define SCAN_JUMP_MAX 0.30
+static double frame_centroid(void)
+{
+    static double cs[64][256], sn[64][256];
+    double num = 0, den = 0;
+    uint32_t h, i;
+    if (!cs[0][1])
+        for (h = 0; h < 64u; h++)
+            for (i = 0; i < 256u; i++) {
+                cs[h][i] = cos(2 * M_PI * (h + 1) * i / 256.0);
+                sn[h][i] = sin(2 * M_PI * (h + 1) * i / 256.0);
+            }
+    for (h = 0; h < 64u; h++) {
+        double re = 0, im = 0, m;
+        for (i = 0; i < 256u; i++) {
+            re += wb_tab[i] * cs[h][i];
+            im += wb_tab[i] * sn[h][i];
+        }
+        m = sqrt(re * re + im * im);
+        num += (h + 1) * m;
+        den += m;
+    }
+    return den > 0 ? num / den : 0;
+}
+
+static int chk_scan_ramp(char *msg, uint32_t n)
+{
+    uint32_t tb, k, bad = 0, nb = 2u * FS / CTL;
+    double worst = 0;
+    track_t *t = &trk[0];
+    for (tb = 0; tb < NWAVES; tb++) {
+        double prev = 0, mx = 0, lim;
+        host_tracks_init();
+        t->p[P_E0] = (int16_t)tb;
+        t->p[P_E1] = 0;
+        t->p[P_SUS] = 127;
+        t->p[P_REV] = 0;
+        trk_note_on(t, 54, 100);
+        run_to(fpos + FS / 4u);
+        for (k = 0; k < nb; k++) {
+            double c;
+            t->p[P_E1] = (int16_t)(k * 127u / (nb - 1u));
+            blk();
+            c = frame_centroid();
+            if (k)
+                mx = fmax(mx, fabs(c - prev));
+            prev = c;
+        }
+        worst = mx > worst ? mx : worst;
+        lim = tb == 4u ? 0.45 : SCAN_JUMP_MAX;
+        if (mx > lim)
+            fprintf(stderr, "scan ramp table %u: centroid jump %.3f harmonics per block\n", tb, mx);
+        bad += mx > lim;
+        trk_note_off(t, 54);
+        run_to(fpos + FS / 2u);
+    }
+    snprintf(msg, n, "SCAN ramp, %u tables: largest centroid jump %.3f harmonics per block (limit %.2f, CHIPTUNE 0.45), %u tables over", NWAVES,
+             worst, SCAN_JUMP_MAX, bad);
+    return !bad;
+}
+
+/* one detent (SCAN 40 -> 44) on a held note: the voice's SCAN moves monotonically, takes 40 ms or more to cover 90 % of
+ * the step, and has arrived inside 400 ms */
+static int chk_scan_glide(char *msg, uint32_t n)
+{
+    uint32_t k, k90 = 0, mono = 1, nb = FS / 2u / CTL;
+    int32_t prev, lo = 40 << 16, hi = 44 << 16;
+    track_t *t = &trk[0];
+    host_tracks_init();
+    t->p[P_E0] = 5;
+    t->p[P_E1] = 40;
+    t->p[P_SUS] = 127;
+    t->p[P_REV] = 0;
+    trk_note_on(t, 54, 100);
+    run_to(fpos + FS / 4u);
+    prev = lo;
+    t->p[P_E1] = 44;
+    for (k = 1; k <= nb; k++) {
+        int32_t s;
+        uint32_t v;
+        blk();
+        for (v = 0; v < NVOICE && !t->v[v].active; v++)
+            ;
+        s = t->v[v].s[6];
+        mono &= s >= prev && s <= hi;
+        prev = s;
+        if (!k90 && s - lo >= (hi - lo) * 9 / 10)
+            k90 = k;
+    }
+    snprintf(msg, n, "SCAN, one detent: monotonic %s, 90 %% of the step after %.0f ms (limit 40..400), settled at %.3f of 4",
+             mono ? "yes" : "NO", k90 * 1000.0 * CTL / FS, (prev - lo) / 65536.0);
+    return mono && k90 * CTL * 1000u >= 40u * FS && k90 * CTL * 1000u <= 400u * FS && prev > hi - 256;
 }
 
 /* a sine at column x of the FILTER page through the real filter (ft, CUT, RES): its gain in dB */
@@ -1446,6 +1544,8 @@ int main(int argc, char **argv)
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
     add(J_CHECK, "wave: tables normalised, DC-free, smooth")->check = chk_wavetab;
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
+    add(J_CHECK, "wave: SCAN ramp, smooth brightness")->check = chk_scan_ramp;
+    add(J_CHECK, "wave: SCAN glide of one detent")->check = chk_scan_glide;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;
