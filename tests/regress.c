@@ -689,7 +689,7 @@ static int chk_space_full(char *msg, uint32_t n)
         R.peak = 0;
         run_to(fpos + 3u * FS / 2u);
         pk = R.peak > pk ? R.peak : pk;
-        for (k = 0; k < 4u * SP_N; k++)
+        for (k = 0; k < SP_L * SP_N; k++)
             rail += sp_line[k / SP_N][k % SP_N] >= 32767 || sp_line[k / SP_N][k % SP_N] <= -32767;
         for (k = 0; k < 8u; k++)
             trk_note_off(t, (uint8_t)(48 + 4u * k));
@@ -744,6 +744,60 @@ static int chk_space_density(char *msg, uint32_t n)
         d1 = space_dens(0.120);
         ok &= d1 > d0 + 0.1 && d1 > 0.3;
         o += snprintf(msg + o, n - (uint32_t)o, "%s%d: %.2f -> %.2f", p ? ", " : "echo density of the impulse response, program ", p, d0, d1);
+    }
+    return ok;
+}
+
+/* ringing (issue #27): the peak-to-mean ratio of the power spectrum (100 Hz - 10 kHz, Hann, 4096 points) of the impulse response's tail,
+ * 0.1 s on; a few strong modes make it large, a dense tail is noise-like (~8 for chi-squared bins). It must beat the 4-line SPACE per program. */
+static double space_pmr(int p)
+{
+    enum { N = 4096 };
+    static double cs[N];
+    double pw, sum = 0, mx = 0;
+    uint32_t b, i;
+    space_run(p, 64, 64, 0);
+    for (i = 0; i < N; i++)
+        cs[i] = cos(2 * M_PI * i / N);
+    for (b = 10; b < 930u; b++) {
+        double re = 0, im = 0;
+        for (i = 0; i < N; i++) {
+            double x = sp_y[4410u + i] * (0.5 - 0.5 * cs[i]);
+            re += x * cs[(b * i) & (N - 1)];
+            im += x * cs[(b * i - N / 4u) & (N - 1)];
+        }
+        pw = re * re + im * im;
+        sum += pw;
+        mx = pw > mx ? pw : mx;
+    }
+    return mx / (sum / 920) ;
+}
+static int chk_space_ringing(char *msg, uint32_t n)
+{
+    static const double OLD[SP_NPROG] = {23.1, 47.0, 19.3, 22.8, 19.6, 33.1};   /* the 4-line version's ratios */
+    int p, ok = 1, o = 0;
+    for (p = 0; p < SP_NPROG; p++) {
+        double r = space_pmr(p);
+        ok &= r < OLD[p];
+        o += snprintf(msg + o, n - (uint32_t)o, "%s%d: %.1f (4-line %.1f)", p ? ", " : "tail spectrum peak-to-mean, program ", p, r, OLD[p]);
+    }
+    return ok;
+}
+
+/* the wet level (issue #27): rms of the first second after a 100 ms noise burst, within 1.5 dB of the 4-line version */
+static int chk_space_level(char *msg, uint32_t n)
+{
+    static const double OLD[SP_NPROG] = {1320, 1010, 1546, 1267, 1501, 1255};
+    int p, ok = 1, o = 0;
+    for (p = 0; p < SP_NPROG; p++) {
+        double e = 0, r;
+        uint32_t i;
+        space_run(p, 64, 64, 100);
+        for (i = 0; i < SP_Y; i++)
+            e += (double)sp_y[i] * sp_y[i];
+        r = sqrt(e / SP_Y);
+        ok &= r > OLD[p] * 0.84 && r < OLD[p] * 1.19;
+        o += snprintf(msg + o, n - (uint32_t)o, "%s%d: %.0f (4-line %.0f)", p ? ", " : "wet rms, program ", p, r, OLD[p]);
     }
     return ok;
 }
@@ -1402,6 +1456,8 @@ int main(int argc, char **argv)
     add(J_CHECK, "space: WOBBLE tail decays")->check = chk_space_decay5;
     add(J_CHECK, "space: no overflow at max SIZE and full input")->check = chk_space_full;
     add(J_CHECK, "space: echo density rises")->check = chk_space_density;
+    add(J_CHECK, "space: the tail rings less than the 4-line version")->check = chk_space_ringing;
+    add(J_CHECK, "space: wet level as the 4-line version")->check = chk_space_level;
     add(J_CHECK, "space: GATED stops in its window")->check = chk_space_gated;
     add(J_CHECK, "space: TONE tilts the spectrum")->check = chk_space_tone;
     add(J_CHECK, "wave: FAT copies and DETUNE")->check = chk_fat;
