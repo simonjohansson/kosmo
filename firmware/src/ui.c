@@ -7,6 +7,7 @@
 
 #define INK RGB(40, 28, 80)
 #define WHITE RGB(255, 255, 255)
+#define NIGHT RGB(8, 6, 28)         /* the sky behind every page but WAVE (pure black, a CRT) */
 #define PX 10                       /* the picture's panel */
 #define PY 40
 #define PW 220
@@ -14,7 +15,7 @@
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[4] = {
-    {B_HOME, 0, RGB(255, 205, 50),  {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4}}},
+    {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4}}},
     {B_EDIT, "FILTER", RGB(70, 220, 170), {{0, &trk[0].p[P_FTYPE], 3, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
     {B_ENV, "ENV", RGB(255, 130, 160), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
@@ -51,18 +52,26 @@ static void disc(int32_t cx, int32_t cy, int32_t r, int32_t t, uint16_t c)
     }
 }
 
+/* a few fixed stars: x, y, brightness (0..255 grey) */
+static const uint8_t STARS[][3] = {{14, 10, 200}, {60, 28, 120}, {110, 8, 255}, {150, 24, 140}, {200, 6, 180},
+    {228, 30, 110}, {6, 120, 130}, {232, 100, 200}, {4, 160, 255}, {236, 150, 120}, {30, 216, 160}, {96, 226, 255},
+    {140, 228, 110}, {190, 222, 190}, {226, 230, 140}, {80, 34, 90}, {170, 4, 100}, {8, 70, 170}, {234, 64, 255}};
+
 /* ------------------------------------------------------- pictures --- */
 static int16_t wy[128];
 
 static void pic_wave(void)
 {
-    int32_t i, mid = PY + PH / 2;
-    cv_rect(PX + 8, mid, PW - 16, 2, ux_mix(WHITE, INK, 15));
-    for (i = 0; i < 127; i++) {
-        int32_t x = PX + 10 + i * 200 / 127, x1 = PX + 10 + (i + 1) * 200 / 127;
-        cv_line_t(x, wy[i] - 2, x1, wy[i + 1] - 2, RGB(235, 60, 130), 5);
-        cv_line_t(x + 1, wy[i] - 2, x1 + 1, wy[i + 1] - 2, RGB(235, 60, 130), 5);
-    }
+    static const uint16_t C[3] = {RGB(0, 60, 24), RGB(0, 130, 54), RGB(120, 255, 140)};   /* halo, halo, core */
+    static const uint8_t T[3] = {9, 6, 3};
+    int32_t i, j, mid = PY + PH / 2, g = RGB(0, 50, 22);
+    cv_frame(PX, PY, PW, PH, g);                          /* graticule */
+    cv_rect(PX, mid, PW, 1, g);
+    for (i = 1; i < 10; i++)
+        cv_rect(PX + i * PW / 10, PY, 1, PH, g);
+    for (j = 0; j < 3; j++)
+        for (i = 0; i < 127; i++)
+            cv_line_t(PX + 10 + i * 200 / 127, wy[i], PX + 10 + (i + 1) * 200 / 127, wy[i + 1], C[j], T[j]);
 }
 
 static void pic_env(void)
@@ -183,27 +192,38 @@ static void banner(void)
 /* ---------------------------------------------------------- page --- */
 static void scene(void)
 {
-    uint16_t bg = PG[ui_page].bg, track = ux_mix(bg, INK, 25);
+    uint16_t bg = PG[ui_page].bg, sky = ui_page ? NIGHT : 0, track = ux_mix(bg, sky, 80);
     int32_t n = 0, i, gap = 6, bw, oct = song.octave, ty = trk[0].p[P_FTYPE] & 3;
     char s[8] = "OCT +0";
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
     while (n < 4 && PG[ui_page].k[n].v)
         n++;
-    cv_text(12, 4, &AF_L, title, INK);
+    for (i = 0; ui_page && i < (int32_t)(sizeof STARS / sizeof STARS[0]); i++) {
+        uint32_t b = STARS[i][2];
+        cv_pset(STARS[i][0], STARS[i][1], RGB(b, b, b));
+        if (b > 240) {                                    /* the brightest twinkle as a plus */
+            cv_pset(STARS[i][0] - 1, STARS[i][1], RGB(90, 90, 120));
+            cv_pset(STARS[i][0] + 1, STARS[i][1], RGB(90, 90, 120));
+            cv_pset(STARS[i][0], STARS[i][1] - 1, RGB(90, 90, 120));
+            cv_pset(STARS[i][0], STARS[i][1] + 1, RGB(90, 90, 120));
+        }
+    }
+    cv_text(12, 4, &AF_L, title, bg);
     s[4] = oct < 0 ? '-' : '+';
     s[5] = (char)('0' + (oct < 0 ? -oct : oct));
-    cv_text_r(232, 12, &AF_M, s, INK, bg);
-    cv_rrect(PX, PY, PW, PH, 10, ux_mix(bg, WHITE, 75), bg);
+    cv_text_r(232, 12, &AF_M, s, WHITE, sky);
+    if (ui_page)
+        cv_rrect(PX, PY, PW, PH, 10, ux_mix(bg, WHITE, 75), bg);
     (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : pic_space)();
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
         const kn_t *k = &PG[ui_page].k[i];
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
         const char *name = k->name ? k->name : FT_NAME[ty];
-        cv_rrect(x, 170, bw, 38, 8, track, bg);
+        cv_rrect(x, 170, bw, 38, 8, track, sky);
         if (fill > 0)
-            cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, WHITE, track);
-        cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, INK);
+            cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
+        cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, WHITE);
     }
     if (ui_banner)
         banner();
@@ -220,7 +240,7 @@ static void ui_draw(void)
     for (i = 0; i < 128; i++)                  /* the scanned frame, once for both strips */
         wy[i] = (int16_t)(PY + PH / 2 - ((wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], i * 2) * 46) >> 15));
     for (y0 = 0; y0 < 240u; y0 += 120u) {
-        cv_begin(240, 120, PG[ui_page].bg);
+        cv_begin(240, 120, ui_page ? NIGHT : 0);
         cv_oy = -(int32_t)y0;
         scene();
         cv_oy = 0;
