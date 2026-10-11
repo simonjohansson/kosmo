@@ -155,10 +155,10 @@ static void midi_pkt(uint32_t st, uint32_t d1, uint32_t d2)   /* as usb.c: the q
 }
 
 /* ------------------------------------------------------------- jobs --- */
-enum { J_SOUND, J_WAVE, J_FILTER, J_MODE, J_REVERB, J_KEYS, J_MIDI, J_CPU, J_CHECK };
+enum { J_SOUND, J_WAVE, J_FILTER, J_MODE, J_REVERB, J_ECHO, J_KEYS, J_MIDI, J_CPU, J_CHECK };
 typedef struct {
     char name[64];
-    uint8_t kind, pi, arg, cpu_notes, own;     /* own: J_CPU is a sound (its cost less the idle mix's), not a mix */
+    uint8_t kind, pi, arg, cpu_notes, own, echo;     /* own: J_CPU is a sound (its cost less the idle mix's), not a mix */
     int (*check)(char *msg, uint32_t n);       /* J_CHECK */
     res_t r;
     int crashed;
@@ -206,6 +206,16 @@ static void job_reverb(const job_t *j)          /* arg: the send, SIZE and DAMP 
     trk[0].p[P_REV] = S[j->arg][0];
     song.g[G_RSIZE] = S[j->arg][1];
     song.g[G_RDAMP] = S[j->arg][2];
+    phrase(&trk[0], 60);
+}
+
+static void job_echo(const job_t *j)            /* arg: the CHARACTER, ECHO at AMOUNT 80 on the test sound pi */
+{
+    host_tracks_init();
+    host_sound(&trk[0], j->pi);
+    song.g[G_ECHAR] = j->arg;
+    song.g[G_EAMT] = 80;
+    song.g[G_EFB] = 40;
     phrase(&trk[0], 60);
 }
 
@@ -285,6 +295,10 @@ static void job_cpu(const job_t *j)
     trk[0].p[P_SUS] = 127;
     trk[0].p[P_FTYPE] = j->arg & 7u;
     trk[0].p[P_E4] = j->arg >> 3;                   /* FAT */
+    if (j->echo) {                                  /* ECHO on, character echo - 1 */
+        song.g[G_ECHAR] = j->echo - 1;
+        song.g[G_EAMT] = 80;
+    }
     trk[0].p[P_DETUNE] = 60;
     for (i = 0; i < j->cpu_notes; i++)
         trk_note_on(&trk[0], NOTES[i], 100);
@@ -317,6 +331,9 @@ static int run_job_body(job_t *j)
         break;
     case J_REVERB:
         job_reverb(j);
+        break;
+    case J_ECHO:
+        job_echo(j);
         break;
     case J_KEYS:
         job_keys(j);
@@ -722,6 +739,175 @@ static int chk_presets(char *msg, uint32_t n)
     return NPRESETS >= 8u && !silent && !same;
 }
 
+/* ---- ECHO (issue #20) ---- */
+/* ECHO fed straight: one block's mix_l / mix_r in, the wet added. Keeps the delay state (host_tracks_init resets it) */
+#define ECN 4096                                     /* blocks of one echo run: ~3 s */
+static int32_t ec_out[2][ECN * CTL];
+static void echo_run(uint32_t blocks, int32_t (*in)(uint32_t pos))
+{
+    uint32_t b, i;
+    for (b = 0; b < blocks; b++)
+        for (i = 0; i < CTL; i++) {
+            int32_t x = in(b * CTL + i);
+            mix_l[i] = mix_r[i] = x;
+            send_r[i] = 0;
+            if (i == CTL - 1u) {
+                echo_block(CTL);
+                memcpy(&ec_out[0][b * CTL], mix_l, sizeof mix_l);
+                memcpy(&ec_out[1][b * CTL], mix_r, sizeof mix_r);
+            }
+        }
+}
+static int32_t in_pulse(uint32_t p) { return p == 5 ? 20000 : 0; }
+static int32_t in_sine(uint32_t p)
+{
+    return (int32_t)(10000.0 * sin(2.0 * M_PI * 200.0 * p / FS));
+}
+/* the energy and the high-pass part (first difference) of a window around the echo that peaks near sample c */
+static void ec_win(const int32_t *x, int32_t c, double *e, double *hf, int32_t *pk)
+{
+    int32_t i;
+    double s = 0, d = 0;
+    *pk = 0;
+    for (i = c - 120; i < c + 120; i++) {
+        s += (double)x[i] * x[i];
+        d += (double)(x[i] - x[i - 1]) * (x[i] - x[i - 1]);
+        if (abs(x[i]) > *pk)
+            *pk = abs(x[i]);
+    }
+    *e = s;
+    *hf = s > 0 ? d / s : 0;
+}
+static int chk_echo_decay(char *msg, uint32_t n)
+{
+    double e[3], hf[3];
+    int32_t pk[3], T, i, off_bad = 0, c;
+    host_tracks_init();
+    for (i = 0; i < CTL; i++) {                     /* AMOUNT 0: untouched, no state */
+        mix_l[i] = i * 100 - 1500;
+        mix_r[i] = 7 * i;
+    }
+    echo_block(CTL);
+    for (i = 0; i < CTL; i++)
+        off_bad += mix_l[i] != i * 100 - 1500 || mix_r[i] != 7 * i;
+    song.g[G_ETIME] = 40;                           /* (1100 + 40 * 120) * 2 = 11800 samples */
+    song.g[G_EFB] = 70;                             /* 70 * 260 / 32768 = 0.55 per hop */
+    song.g[G_EAMT] = 127;
+    T = 11800;
+    echo_run(ECN, in_pulse);
+    c = 5 + T;                                      /* L at T, R at 2 T, L at 3 T */
+    ec_win(ec_out[0], c, &e[0], &hf[0], &pk[0]);
+    ec_win(ec_out[1], c + T, &e[1], &hf[1], &pk[1]);
+    ec_win(ec_out[0], c + 2 * T, &e[2], &hf[2], &pk[2]);
+    snprintf(msg, n, "echo off: %d samples changed; pulse echoes L %d, R %d, L %d (peak), high-pass share %.3f %.3f %.3f",
+             off_bad, pk[0], pk[1], pk[2], hf[0], hf[1], hf[2]);
+    return !off_bad && pk[0] > 5000 && pk[1] < pk[0] && pk[2] < pk[1] && pk[2] > 100 && hf[2] < hf[1] && hf[1] < hf[0];
+}
+static int32_t in_burst(uint32_t p) { return p < 4000 ? (p / 50 & 1 ? 25000 : -25000) : 0; }
+static int chk_echo_bound(char *msg, uint32_t n)
+{
+    uint32_t ch, bad = 0, silent = 0;
+    int32_t worst = 0;
+    for (ch = 0; ch < 3u; ch++) {
+        int32_t tail = 0, i;
+        host_tracks_init();
+        song.g[G_ETIME] = 10;
+        song.g[G_EFB] = 127;                         /* gain > 1: it rings, the clip bounds it */
+        song.g[G_ECHAR] = (int16_t)ch;
+        song.g[G_EAMT] = 127;
+        echo_run(ECN, in_burst);
+        for (i = 0; i < ECN * CTL; i++) {
+            int32_t a = abs(ec_out[0][i]);
+            worst = a > worst ? a : worst;
+            if (i > ECN * CTL - 4000)
+                tail = a > tail ? a : tail;
+        }
+        silent += tail < 500;
+    }
+    bad = worst > 32767;
+    snprintf(msg, n, "ECHO REPEATS 127: peak %d (<= 32767), %u of 3 characters fell silent (it self-oscillates)", worst, silent);
+    return !bad && !silent;
+}
+static int chk_echo_glide(char *msg, uint32_t n)
+{
+    uint32_t b;
+    int32_t i, d0 = 0, d1 = 0, prev = 0, x;
+    host_tracks_init();
+    song.g[G_ETIME] = 20;
+    song.g[G_EFB] = 0;
+    song.g[G_EAMT] = 127;
+    for (b = 0; b < 1200u; b++) {
+        if (b == 700u)
+            song.g[G_ETIME] = 110;                  /* from 3500 to 14300 ticks */
+        for (i = 0; i < (int32_t)CTL; i++) {
+            mix_l[i] = mix_r[i] = in_sine(b * CTL + i);
+            send_r[i] = 0;
+        }
+        echo_block(CTL);
+        for (i = 0; i < (int32_t)CTL; i++) {
+            x = mix_l[i] - in_sine(b * CTL + i);        /* the wet alone */
+            if (b > 400u) {
+                int32_t d = abs(x - prev);
+                if (b < 700u) d0 = d > d0 ? d : d0;
+                else d1 = d > d1 ? d : d1;
+            }
+            prev = x;
+        }
+    }
+    snprintf(msg, n, "ECHO TIME 20 -> 110 on a 200 Hz tone: largest step %d before, %d during the glide (a click is > 3000)", d0, d1);
+    return d0 > 100 && d1 < 3 * d0 && d1 < 3000;
+}
+static int chk_echo_noise(char *msg, uint32_t n)
+{
+    int32_t i;
+    double sc = 0, ss = 0, cc = 0, cs = 0, ssn = 0, res = 0, db[2];
+    uint32_t comp;
+    for (comp = 0; comp < 2u; comp++) {
+        const int32_t N0 = 11800 + 4000, N1 = N0 + 22050;
+        host_tracks_init();
+        song.g[G_ETIME] = 40;
+        song.g[G_EFB] = 0;
+        song.g[G_ECHAR] = comp ? EC_CRUNCH : EC_CLEAN;
+        song.g[G_EAMT] = 127;
+        echo_run(ECN, in_sine);
+        sc = ss = cc = cs = ssn = 0;                 /* fit A sin + B cos at 200 Hz on a second of the first echo */
+        for (i = N0; i < N1; i++) {
+            double w = 2.0 * M_PI * 200.0 * i / FS, y = ec_out[0][i] - in_sine(i);
+            sc += y * cos(w); ss += y * sin(w); cc += cos(w) * cos(w); cs += sin(w) * sin(w); ssn += y * y;
+        }
+        res = ssn - (sc * sc / cc + ss * ss / cs);
+        db[comp] = 10 * log10(res / (N1 - N0) / (32768.0 * 32768.0));
+    }
+    snprintf(msg, n, "ECHO noise floor of a -4 dBFS 200 Hz tone: %.1f dBFS linear (12 bit, TPDF), %.1f dBFS companded", db[0], db[1]);
+    return db[0] < -66 && db[0] > -85 && db[1] < -50;
+}
+static int32_t in_mod(uint32_t p) { return in_sine(p) + (p / 3000 & 1 ? 3000 : -3000); }
+static int chk_echo_modes(char *msg, uint32_t n)
+{
+    int32_t i, peak_b, changes = 0, prev = 0;
+    host_tracks_init();
+    song.g[G_ETIME] = 20;
+    song.g[G_EFB] = 60;
+    song.g[G_ECHAR] = EC_BACK;
+    song.g[G_EAMT] = 127;
+    echo_run(ECN, in_mod);
+    peak_b = 0;
+    for (i = 0; i < ECN * CTL; i++)
+        peak_b = abs(ec_out[1][i]) > peak_b ? abs(ec_out[1][i]) : peak_b;
+    host_tracks_init();
+    song.g[G_ETIME] = 127;                            /* 2 kHz: a hold of ~22 samples */
+    song.g[G_ECHAR] = EC_ROBOT;
+    song.g[G_EAMT] = 127;
+    echo_run(ECN, in_sine);
+    for (i = 40000; i < 41000; i++) {
+        changes += abs(ec_out[0][i] - prev) > 4;
+        prev = ec_out[0][i];
+    }
+    snprintf(msg, n, "ECHO BACKWARDS right peak %d; ROBOT 2 kHz: %d changes in 1000 samples (a hold of ~22 samples gives ~45)",
+             peak_b, changes);
+    return peak_b > 2000 && changes > 30 && changes < 60;
+}
+
 /* Voices held before a mode change must remain reclaimable except for the lead. */
 static int chk_mode_budget(char *msg, uint32_t n)
 {
@@ -955,6 +1141,7 @@ int main(int argc, char **argv)
     uint32_t jobs_at_once = getenv("JOBS") ? (uint32_t)atoi(getenv("JOBS")) : 8u;
     static const char *const MN[4] = {"POLY", "MONO", "LEGATO", "UNISON"};
     static const char *const FN[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
+    static const char *const EN[5] = {"CLEAN", "CRUNCH", "TOY", "BACKWARDS", "ROBOT"};
     static const char *const RN[5] = {"dry", "send40", "send127", "big_bright", "small_dark"};
     static const uint8_t MODE_S[3] = {0, 1, 3}, REV_S[2] = {1, 2}, FILT_S[3] = {0, 3, 5};
     static kv_t gold[MAXJ], cpu[MAXJ];
@@ -1006,6 +1193,10 @@ int main(int argc, char **argv)
             j->pi = REV_S[i];
             j->arg = (uint8_t)k0;
         }
+    for (k0 = 0; k0 < 5u; k0++) {
+        snprintf(name, sizeof name, "echo/ROBOT_LEAD/%s", EN[k0]);
+        add(J_ECHO, name)->arg = (uint8_t)k0;
+    }
     add(J_MODE, "mode/ROBOT_LEAD/FAT4")->arg = 4u << 2;      /* POLY, FAT 4 */
     add(J_KEYS, "keys/octave");
     add(J_MIDI, "midi/notes_bend_sustain");
@@ -1029,6 +1220,11 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: FAT copies and DETUNE")->check = chk_fat;
     add(J_CHECK, "wave: FAT live on held notes")->check = chk_fat_live;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
+    add(J_CHECK, "echo: off is silent and untouched, repeats decay and darken")->check = chk_echo_decay;
+    add(J_CHECK, "echo: REPEATS 127 stays bounded")->check = chk_echo_bound;
+    add(J_CHECK, "echo: TIME change glides without a click")->check = chk_echo_glide;
+    add(J_CHECK, "echo: 12-bit noise floor")->check = chk_echo_noise;
+    add(J_CHECK, "echo: BACKWARDS and ROBOT render")->check = chk_echo_modes;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */
@@ -1053,6 +1249,14 @@ int main(int argc, char **argv)
     {
         job_t *j = add(J_CPU, "cpu/fat4");              /* FAT 4 fills the same 8-voice pool: no dearer than 8 notes */
         j->arg = 4u << 3;
+        j->cpu_notes = 8;
+        j->own = 1;
+    }
+    for (i = 0; i < 2u; i++) {                         /* the dearest ECHO characters (CLEAN, BACKWARDS) on top of 8 notes */
+        job_t *j;
+        snprintf(name, sizeof name, "cpu/echo/%s", EN[i ? 3 : 0]);
+        j = add(J_CPU, name);
+        j->echo = (uint8_t)(i ? 4 : 1);
         j->cpu_notes = 8;
         j->own = 1;
     }

@@ -29,4 +29,8 @@ static const param_desc_t GP[G_COUNT] = {
     [G_TUNE] = PD("TUNE", F_INT, -50, 50, 0),
     [G_RSIZE] = PD("SIZE", F_PCT, 0, 127, 90),
     [G_RDAMP] = PD("DAMP", F_PCT, 0, 127, 60),
+    [G_ETIME] = PD("TIME", F_INT, 0, 127, 40),
+    [G_EFB] = PD("REPEATS", F_PCT, 0, 127, 40),
+    [G_ECHAR] = PD("CHAR", F_ENUM, 0, 4, 0),       /* CLEAN CRUNCH TOY BACKWARDS ROBOT */
+    [G_EAMT] = PD("AMOUNT", F_PCT, 0, 127, 0),     /* 0 = off */
 };

@@ -5,3 +5,4 @@ wave_render 566
 fm1_alnk0_irq 1910
 fm1_timer5_irq 26559
 rev_room 684
+echo_block 750

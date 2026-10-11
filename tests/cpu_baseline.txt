@@ -11,4 +11,6 @@ cpu/filter/HP 784
 cpu/filter/NOTCH 790
 cpu/filter/COMB 561
 cpu/fat4 758
+cpu/echo/CLEAN 934
+cpu/echo/BACKWARDS 982
 cpu/mix/idle 163

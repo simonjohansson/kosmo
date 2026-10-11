@@ -51,6 +51,11 @@ reverb/BELLS/send40 49e9db8f766d90c0
 reverb/BELLS/send127 3da3f83e2586c12c
 reverb/BELLS/big_bright 0a118370e28b9f34
 reverb/BELLS/small_dark e23a3d6a615abff4
+echo/ROBOT_LEAD/CLEAN 44ac3a7a2af26722
+echo/ROBOT_LEAD/CRUNCH db19c27c24ebc6d6
+echo/ROBOT_LEAD/TOY 5e60298dbbdaa9f2
+echo/ROBOT_LEAD/BACKWARDS 256fefba834c4cbc
+echo/ROBOT_LEAD/ROBOT 1dfb6ad1aa4ec3ac
 mode/ROBOT_LEAD/FAT4 6d65abd353719898
 keys/octave 2af7c6dbb926a890
 midi/notes_bend_sustain 49651ec5758b87f4

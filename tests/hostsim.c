@@ -83,6 +83,9 @@ static void host_tracks_init(void)                /* as kosmo_init (main.c): the
         trk[0].p[i] = TP[i].def;
     for (i = 0; i < 8u; i++)
         trk[0].p[P_E0 + i] = ENGINE->edit[i].def;
+    ec_init();
+    ec.dirty = 1;                                     /* (the lines hold the last test's audio) */
+    ec.clr = 0;
     song.master_q12 = 4096;
 }
 

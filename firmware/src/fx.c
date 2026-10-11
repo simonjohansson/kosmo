@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Effects: the part's level / pan, the ROOM reverb send, then the master: DC blocker, peak limiter, soft clip.
+/* Effects: the part's level / pan, ECHO (echo.c), the ROOM reverb send, then the master: DC blocker, peak limiter, soft clip.
  * Mono reverb bus, stereo dry mix. */
 static const uint16_t REV_COMB[4] = {1116, 1188, 1277, 1356};
 static const uint16_t REV_AP[2] = {556, 441};
@@ -125,6 +125,7 @@ static void rev_clear(void)
 static void events_block(uint32_t n);                    /* input.c */
 static int32_t part_buf[CTL];                            /* the part's block (mix_part) */
 static int32_t send_r[CTL], wet[CTL], mix_l[CTL], mix_r[CTL];
+#include "echo.c"
 
 /* the part into the dry mix and the reverb send; with no voice sounding it costs a cleared buffer only */
 static void mix_part(track_t *t, uint32_t n)
@@ -159,6 +160,7 @@ static void mix_block(int32_t *out, uint32_t n)
     }
     PFX(0, events_block(n));
     PFX(1, mix_part(&trk[0], n));
+    PFX(6, echo_block(n));                              /* before the reverb: the send hears the echoes */
     PFX(3, rev_room(send_r, wet, n));
 #if KOSMO_PERF
     uint32_t _t4 = fm1_ticks();

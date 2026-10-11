@@ -42,8 +42,11 @@ enum {                          /* per-part parameters */
 enum {                          /* global parameters */
     G_TUNE,                     /* cents */
     G_RSIZE, G_RDAMP,           /* ROOM reverb */
+    G_ETIME, G_EFB, G_ECHAR, G_EAMT,   /* ECHO: TIME, REPEATS, CHARACTER (echo.c), AMOUNT; the order presets.c loads */
     G_COUNT
 };
+
+enum { EC_CLEAN, EC_CRUNCH, EC_TOY, EC_BACK, EC_ROBOT };   /* G_ECHAR */
 
 /* ------------------------------------------------- voices, engines --- */
 enum { V_POLY, V_MONO, V_LEGATO, V_UNISON };   /* P_VOICE */
