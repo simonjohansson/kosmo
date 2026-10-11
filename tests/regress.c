@@ -916,7 +916,7 @@ static int chk_echo_noise(char *msg, uint32_t n)
 static int32_t in_mod(uint32_t p) { return in_sine(p) + (p / 3000 & 1 ? 3000 : -3000); }
 static int chk_echo_modes(char *msg, uint32_t n)
 {
-    int32_t i, peak_b, changes = 0, prev = 0;
+    int32_t i, peak_b;
     host_tracks_init();
     song.g[G_ETIME] = 20;
     song.g[G_EFB] = 60;
@@ -926,18 +926,39 @@ static int chk_echo_modes(char *msg, uint32_t n)
     peak_b = 0;
     for (i = 0; i < ECN * CTL; i++)
         peak_b = abs(ec_out[1][i]) > peak_b ? abs(ec_out[1][i]) : peak_b;
+    snprintf(msg, n, "ECHO BACKWARDS right peak %d", peak_b);
+    return peak_b > 2000;
+}
+/* ROBOT is an echo: an impulse comes back at TIME, its second (held) repeat in flat runs of ~9 samples, and stays bounded */
+static int chk_echo_robot(char *msg, uint32_t n)
+{
+    int32_t T = 11800, i, pk = 0, at = 0, runs = 0, flat = 0, worst = 0;
     host_tracks_init();
-    song.g[G_ETIME] = 127;                            /* 2 kHz: a hold of ~22 samples */
+    song.g[G_ETIME] = 40;
+    song.g[G_EFB] = 70;
     song.g[G_ECHAR] = EC_ROBOT;
     song.g[G_EAMT] = 127;
-    echo_run(ECN, in_sine);
-    for (i = 40000; i < 41000; i++) {
-        changes += abs(ec_out[0][i] - prev) > 4;
-        prev = ec_out[0][i];
+    echo_run(ECN, in_pulse);
+    for (i = 5 + T - 200; i < 5 + T + 200; i++)
+        if (abs(ec_out[0][i]) > pk) {
+            pk = abs(ec_out[0][i]);
+            at = i;
+        }
+    for (i = 5 + 2 * T - 60; i < 5 + 2 * T + 60; i++) {   /* the R repeat is held ~9 samples: equal neighbours, few steps */
+        flat += ec_out[1][i] == ec_out[1][i + 1] && ec_out[1][i];
+        runs += ec_out[1][i] != ec_out[1][i + 1];
     }
-    snprintf(msg, n, "ECHO BACKWARDS right peak %d; ROBOT 2 kHz: %d changes in 1000 samples (a hold of ~22 samples gives ~45)",
-             peak_b, changes);
-    return peak_b > 2000 && changes > 30 && changes < 60;
+    host_tracks_init();
+    song.g[G_ETIME] = 10;
+    song.g[G_EFB] = 127;
+    song.g[G_ECHAR] = EC_ROBOT;
+    song.g[G_EAMT] = 127;
+    echo_run(ECN, in_burst);
+    for (i = 0; i < ECN * CTL; i++)
+        worst = abs(ec_out[0][i]) > worst ? abs(ec_out[0][i]) : worst;
+    snprintf(msg, n, "ECHO ROBOT impulse returns at %d (TIME %d), peak %d, %d held nonzero pairs in the R repeat (%d steps); REPEATS 127 peak %d",
+             at - 5, T, pk, flat, runs, worst);
+    return abs(at - 5 - T) < 40 && pk > 3000 && flat > 3 && runs > 1 && worst <= 32767;
 }
 
 /* Voices held before a mode change must remain reclaimable except for the lead. */
@@ -1258,7 +1279,8 @@ int main(int argc, char **argv)
     add(J_CHECK, "echo: REPEATS 127 stays bounded")->check = chk_echo_bound;
     add(J_CHECK, "echo: TIME change glides without a click")->check = chk_echo_glide;
     add(J_CHECK, "echo: 12-bit noise floor")->check = chk_echo_noise;
-    add(J_CHECK, "echo: BACKWARDS and ROBOT render")->check = chk_echo_modes;
+    add(J_CHECK, "echo: BACKWARDS renders")->check = chk_echo_modes;
+    add(J_CHECK, "echo: ROBOT echoes at TIME with held repeats")->check = chk_echo_robot;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */
