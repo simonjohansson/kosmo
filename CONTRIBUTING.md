@@ -1,4 +1,4 @@
-# Contributing to Felucca
+# Contributing to Kosmo
 
 Thanks for helping! To keep things easy to follow, please use the right place:
 
