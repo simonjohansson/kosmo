@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* The kids' UI: four pages, one function button each (its LED is lit while the page shows):
- *   HOME WAVE (wave, scan, fat, detune) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX SPACE (amount, size)
+ *   HOME WAVE (wave, scan, fat, detune) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX ECHO (time, repeats, character,
+ *   amount), pressed again SPACE (amount, size), again ECHO: the order of the signal chain; the header corner says 1/2 or 2/2
  * K1..K4 turn the bars at the bottom. OCT-/OCT+ shift the keys (both together: back to the middle).
  * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in
  * strips of a rectangle (cv_ox / cv_oy shift screen coordinates into the strip) and only what changed: a knob step sends its bar and the picture
@@ -14,7 +15,10 @@
 #define PH 122
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
-static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[4] = {
+#define NPG 5                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE */
+#define PG_SPACE 3
+#define PG_ECHO 4
+static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[NPG] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
                                           {"Fat", &trk[0].p[P_E4], 4, 1}, {"Detune", &trk[0].p[P_DETUNE], 127, 4}}},
     {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 4, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
@@ -22,8 +26,11 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
     {B_ENV, "ENV", RGB(60, 230, 255), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
                                         {"Sustain", &trk[0].p[P_SUS], 127, 4}, {"Release", &trk[0].p[P_REL], 127, 4}}},
     {B_FX, "SPACE", RGB(255, 80, 200), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
+    {B_FX, "ECHO", RGB(255, 96, 40), {{"Time", &song.g[G_ETIME], 127, 4}, {"Repeats", &song.g[G_EFB], 127, 4},
+                                      {0, &song.g[G_ECHAR], 4, 1}, {"Amount", &song.g[G_EAMT], 127, 4}}},
 };
 static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
+static const char *const EC_NAME[5] = {"Clean", "Crunch", "Toy", "Back", "Robot"};   /* BACKWARDS: the bar is 52 px wide */
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
 static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
@@ -177,6 +184,38 @@ static void pic_space(void)
     disc(cx, cy, 5, 0, c);
 }
 
+/* ECHO: a row of copies of the waveform, each one smaller and dimmer: the spacing is TIME, the fade REPEATS, the whole
+ * row dims with AMOUNT; the character shapes the copies (CRUNCH clipped, TOY stepped, BACKWARDS reversed, ROBOT held) */
+static void pic_echo(void)
+{
+    int32_t sp = 24 + song.g[G_ETIME] * 38 / 127, gain = 28 + song.g[G_EFB] * 68 / 127, lum = 30 + song.g[G_EAMT] * 70 / 127;
+    int32_t ch = song.g[G_ECHAR], a[9] = {100}, n = 0, k, i, x0;
+    while (n < 8 && PX + 10 + n * sp + 32 <= PX + PW - 4 && a[n] >= 6) {     /* as many as fit and still show */
+        a[n + 1] = a[n] * gain / 100;
+        n++;
+    }
+    for (k = n - 1; k >= 0; k--) {
+        int32_t amp = 44 * a[k] / 100, h = 0;
+        x0 = PX + 10 + k * sp;
+        for (i = 0; i < 32; i++) {
+            int32_t y;
+            if (!(ch == 4 && i % 6))                             /* ROBOT holds every 6th point */
+                y = (wave_peek(trk[0].p[P_E0] & 7, trk[0].p[P_E1], (ch == 3 ? 31 - i : i) * 8) * amp) >> 15;
+            else
+                y = h;
+            y = ch == 1 ? clamp(y * 8 / 5, -amp * 6 / 10, amp * 6 / 10) : ch == 2 ? y / 6 * 6 : y;
+            h = y;
+            pt[i][0] = (int16_t)(x0 + i);
+            pt[i][1] = (int16_t)(PY + PH / 2 - y);
+        }
+        if (k == 0)
+            glow_pts(32, ux_mix(0, PG[PG_ECHO].bg, lum));
+        else
+            for (i = 0; i < 31; i++)
+                cv_line_t(pt[i][0], pt[i][1], pt[i + 1][0], pt[i + 1][1], ux_mix(0, PG[PG_ECHO].bg, a[k] * lum / 100 + 8), 3);
+    }
+}
+
 static void banner(void)
 {
     const char *n = PRESETS[ui_preset].name;
@@ -196,11 +235,16 @@ static void scene(void)
     uint16_t bg = PG[ui_page].bg, track = ux_mix(0, bg, 20);
     int32_t n = ui_nk(), i, gap = 6, bw, ty = clamp(trk[0].p[P_FTYPE], 0, 4);
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
-    if (ui_hit(R_TITLE))
+    if (ui_hit(R_TITLE)) {
         cv_text(12, 4, &AF_L, title, bg);
+        if (PG[ui_page].btn == B_FX) {                         /* which FX page: 1/2 ECHO, 2/2 SPACE */
+            const char *t = ui_page == PG_ECHO ? "1/2" : "2/2";
+            cv_text(228 - text_w(&AF_M, t), 12, &AF_M, t, bg);
+        }
+    }
     if (ui_hit(R_PIC)) {
         graticule(PX, PY, PW, PH, bg);
-        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : pic_space)();
+        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : pic_space)();
     }
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
@@ -208,7 +252,7 @@ static void scene(void)
         if (!ui_hit(bar_rc(i)))
             continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
-        const char *name = k->name ? k->name : FT_NAME[ty];
+        const char *name = k->name ? k->name : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
@@ -259,7 +303,7 @@ static void ui_input(void)
         song.octave++;
     for (i = 0; i < 4u; i++)
         if (pressed & (1u << panel.btn[PG[i].btn]))
-            ui_page = (uint8_t)i;
+            ui_page = (uint8_t)(i == PG_SPACE ? (ui_page == PG_ECHO ? PG_SPACE : PG_ECHO) : i);   /* FX: ECHO, SPACE, ECHO ... */
     pst = panel_enc(EN_PRESET);
     if (pst) {                                  /* PRESETS: step with wrap-around, show the name for 1.5 s */
         ui_preset = (uint8_t)((ui_preset + pst % (int32_t)NPRESETS + (int32_t)NPRESETS) % (int32_t)NPRESETS);
@@ -278,12 +322,12 @@ static void ui_input(void)
     }
     if (!fm1_led_anim_on() && ui_led != (int8_t)ui_page) {     /* the page's button glows, the others do not */
         for (i = 0; i < 4u; i++)
-            fm1_led_key(panel.btn[PG[i].btn], i == ui_page);
+            fm1_led_key(panel.btn[PG[i].btn], PG[i].btn == PG[ui_page].btn);
         ui_led = (int8_t)ui_page;
     }
     for (i = 0; i < NVOICE; i++)
         active |= trk[0].v[i].active;
-    if (active && ui_page == 3 && fm1_ms - ui_last >= 40u)
+    if (active && ui_page == PG_SPACE && fm1_ms - ui_last >= 40u)
         ui_ring = ui_ring % 48u + 1u;           /* the rings creep outward while notes play (never 0: that is "quiet") */
     else if (!active)
         ui_ring = 0;

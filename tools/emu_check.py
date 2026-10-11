@@ -17,11 +17,11 @@ EMU = Path(os.environ.get("FM1_EMULATOR", Path.home() / "src/fm1-emulator/emulat
 TOL = 0          # per-channel difference a pixel may have: 0 was stable over 3+ runs (snapshots are bit-identical); raise if the 2-core interleaving ever flakes
 S, MS = 10**9, 10**6
 # qcodes from fm1-emulator src/include/ui/fm1-controls.h: pages, K1..K4 (A, B phases), PRESETS, piano C
-PAGE = {"HOME": "h", "EDIT": "f5", "ENV": "p", "FX": "f1"}
+PAGE = [("HOME", "h"), ("EDIT", "f5"), ("ENV", "p"), ("ECHO", "f1"), ("SPACE", "f1")]   # FX pressed twice: ECHO, then SPACE (ui.c)
 KNOB = [("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")]
 PRESETS, NOTE = ("f13", "f14"), "z"
 # page -> how many knobs it uses (ui.c PG[])
-USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "FX": 2}
+USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "ECHO": 4, "SPACE": 2}
 
 
 def script():
@@ -45,7 +45,7 @@ def script():
             ev.extend([(t, b, 1), (t + 5 * MS, a, 1), (t + 10 * MS, b, 0), (t + 15 * MS, a, 0)])
             t += 25 * MS
 
-    for i, (page, key) in enumerate(PAGE.items(), 1):
+    for i, (page, key) in enumerate(PAGE, 1):
         if page != "HOME":
             press(key)
             snap(f"{i:02d}_{page.lower()}_page")
@@ -53,11 +53,11 @@ def script():
             turn(KNOB[k])
         snap(f"{i:02d}_{page.lower()}_knobs")
     turn(PRESETS, 1)
-    snap("05_preset")
+    snap("06_preset")
     t += 1200 * MS                                          # the name banner is gone
-    snap("06_before_note")
+    snap("07_before_note")
     ev.append((t, NOTE, 1))
-    steps.append(("07_note", t + 600 * MS))
+    steps.append(("08_note", t + 600 * MS))
     ev.append((t + 700 * MS, NOTE, 0))
     return ev, steps
 
