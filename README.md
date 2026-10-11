@@ -19,6 +19,7 @@ Needs [mise](https://mise.jdx.dev) and, on macOS, Docker (the JieLi toolchain is
 mise run build    # build/kosmo.bin, the update loader and the installable package
 mise run smoke    # boots build/kosmo.bin in fm1-emulator, plays a key, prints PASS
 mise run emu-check # visits every page, compares LCD snapshots with tests/emu_ref (--update: mise run emu-check -- --update)
+mise run emu-load  # guest audio-ISR load (chord at FAT 0 / 4) and WAVE redraw length in the emulator, against limits
 mise run stress   # fm1-emulator tests/stress.py, seed 1
 mise run test     # host tests (the DSP, MIDI, storage, USB, the update path, the browser emulator)
 ```

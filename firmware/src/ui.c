@@ -194,16 +194,17 @@ static void scene(void)
         banner();
 }
 
-static void ui_draw(void)
+static void ui_draw(uint32_t top)               /* rows top .. 239 (the title above PY is only redrawn when it changed) */
 {
-    uint32_t y0;
+    uint32_t y0, h;
     int32_t i;
     if (ux.mono) {                             /* the GREY palette mixes to grey: these pages are in colour */
         ux.mono = 0;
         ux.gen++;
     }
-    for (y0 = 0; y0 < 240u; y0 += 120u) {
-        cv_begin(240, 120, 0);
+    for (y0 = top; y0 < 240u; y0 += 120u) {
+        h = 240u - y0 < 120u ? 240u - y0 : 120u;
+        cv_begin(240, h, 0);
         cv_oy = -(int32_t)y0;
         scene();
         cv_oy = 0;
@@ -267,7 +268,9 @@ static void ui_input(void)
     sig[6] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
     if (!memcmp(sig, ui_sig, sizeof sig) || fm1_ms - ui_last < 40u)
         return;
+    /* a knob step on the same page leaves the title (the WAVE name on HOME) alone: 17 % less to send over the SPI */
+    i = ui_sig[0] != sig[0] || (sig[0] == 0 && ui_sig[1] != sig[1]) ? 0u : PY;
     memcpy(ui_sig, sig, sizeof sig);
     ui_last = fm1_ms;
-    ui_draw();
+    ui_draw(i);
 }

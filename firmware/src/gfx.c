@@ -267,7 +267,9 @@ static void cv_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c)
 /* a line `thick` px tall (the scope's trace: 2) */
 static void cv_line_t(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint16_t c, int32_t thick)
 {
-    int32_t t;
+    int32_t t, lo = (y0 < y1 ? y0 : y1) + cv_oy, hi = (y0 < y1 ? y1 : y0) + cv_oy + thick - 1;
+    if (hi < 0 || lo >= (int32_t)cv_h)          /* wholly in another strip: nothing of it would land on this canvas */
+        return;
     for (t = 0; t < thick; t++)
         cv_line(x0, y0 + t, x1, y1 + t, c);
 }
