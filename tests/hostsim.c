@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Host-side render of the KOSMO DSP (voices, the ROOM reverb, the master) to a WAV, for debugging sound without
+/* Host-side render of the KOSMO DSP (voices, the SPACE reverb, the master) to a WAV, for debugging sound without
  * hardware. Same sources as the firmware.
  *   tests/run_tests.sh builds it into build/host/;
  *   build/host/hostsim SOUND MONO OUT.wav [REVERB]
@@ -84,6 +84,7 @@ static void host_tracks_init(void)                /* as kosmo_init (main.c): the
     for (i = 0; i < 8u; i++)
         trk[0].p[P_E0 + i] = ENGINE->edit[i].def;
     ec_init();
+    space_clear();
     ec.dirty = 1;                                     /* (the lines hold the last test's audio) */
     ec.clr = 0;
     song.master_q12 = 4096;

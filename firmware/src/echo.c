@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* ECHO (issue #20): a vintage 12-bit stereo delay between the voices and the ROOM reverb. It adds to mix_l / mix_r (the
+/* ECHO (issue #20): a vintage 12-bit stereo delay between the voices and the SPACE reverb. It adds to mix_l / mix_r (the
  * dry signal stays) and to the reverb send. At AMOUNT 0 it does nothing at all: the output is bit for bit as without it.
  *
  * Memory: two lines (A feeds B, B feeds back to A: the echoes ping-pong L R L R), 16K samples each at a ~22 kHz delay

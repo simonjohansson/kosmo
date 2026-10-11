@@ -19,7 +19,7 @@ S, MS = 10**9, 10**6
 SRAM = 0x01C00000
 HALF_US = 128 * 10**6 // 44100
 LOAD_MAX = {0: 25, 4: 45}           # % of a half, 93 ms average with the chord held (measured 21.5 / 40.6)
-ECHO_MAX = {"CLEAN": 42, "BACKWARDS": 44}   # FAT 4 with ECHO on (issue #20: AMOUNT 64, REPEATS as at boot; measured 37.5 / 39.5)
+ECHO_MAX = {"CLEAN": 42, "BACKWARDS": 44}   # FAT 4 with ECHO on (issue #20: AMOUNT 64, REPEATS as at boot; measured 37.5 / 39.5 with ROOM, 39.8 / 41.4 with SPACE)
 WORST_US = HALF_US * 85 // 100      # above this the firmware sheds voices
 STEP_BYTES_MAX = 66_000             # SPI bytes of one DETUNE step on HOME: the bar (58 x 60) and the picture (224 x 122), measured 61.6 K (96 K before)
 BAR_MS_MAX = 15                     # last contact of the detent to the bar on the panel (measured 5.8; 74 ms to the whole redraw before)
@@ -27,7 +27,8 @@ PIC_MS_MAX = 40                     # from the bar on the panel to the picture o
 BAR_BYTES = 58 * 60 * 2
 BURST = 12                          # detents 25 ms apart: DETUNE must move BURST * 4
 SPI_BPS = 12_000_000 // 8
-K3, K4 = ("f19", "f20"), ("f21", "f22")   # HOME knobs (tools/emu_check.py)
+SPACE_MAX = 43                      # FAT 4 + ECHO CLEAN + SPACE on its 2/2 page, WOBBLE, AMOUNT up (issue #21: ROOM + 2 points; measured 39.8 with the default BEDROOM)
+K1, K2, K3, K4 = ("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")   # knobs (tools/emu_check.py)
 CHORD = ("z", "m", "slash")
 
 
@@ -43,14 +44,19 @@ def detents(ev, t, knob, n, gap=120):
     return t
 
 
-def run(fw, fat, chord, steps, gap=120, echo=None):
+def run(fw, fat, chord, steps, gap=120, echo=None, space=False):
     ev = []
     t = detents(ev, 19 * S, K3[::-1], 4)            # FAT is 2 after boot: down to 0 ...
     detents(ev, t, K3, fat)                          # ... then up
     if echo is not None:                             # ECHO: the FX button, AMOUNT 0 -> 64, CHARACTER echo steps (CLEAN 0, BACKWARDS 3)
         ev += [(19950 * MS, "f1", 1), (20000 * MS, "f1", 0)]
         t = detents(ev, 20100 * MS, K4, 16)
-        detents(ev, t, K3, echo)
+        t = detents(ev, t, K3, echo)
+        if space:                                    # the FX button again: SPACE; AMOUNT +32, SIZE +16, ROOM WOBBLE
+            ev += [(t + 100 * MS, "f1", 1), (t + 150 * MS, "f1", 0)]
+            t = detents(ev, t + 300 * MS, K1, 8)
+            t = detents(ev, t, K2, 4)
+            detents(ev, t, K3, 5)
     for k in chord:
         ev += [(20 * S, k, 1), (26 * S, k, 0)]
     detents(ev, 20 * S, K4, steps, gap)                   # DETUNE: each step is one WAVE redraw
@@ -92,6 +98,11 @@ def main():
         if r["load"] > ECHO_MAX[name]: bad.append(f"FAT 4 + ECHO {name}: load {r['load']:.1f}% > {ECHO_MAX[name]}%")
         if r["max_us"] > WORST_US: bad.append(f"FAT 4 + ECHO {name}: worst half {r['max_us']} us > {WORST_US}")
         if r["late"]: bad.append(f"FAT 4 + ECHO {name}: {r['late']} late halves (underrun)")
+    r = run(fw, 4, CHORD, 0, echo=0, space=True)
+    print(f"chord, FAT 4, ECHO CLEAN + SPACE WOBBLE: load {r['load']:.1f}% (max {SPACE_MAX}), worst half {r['max_us']} us (max {WORST_US}), late {r['late']}")
+    if r["load"] > SPACE_MAX: bad.append(f"FAT 4 + ECHO + SPACE: load {r['load']:.1f}% > {SPACE_MAX}%")
+    if r["max_us"] > WORST_US: bad.append(f"FAT 4 + ECHO + SPACE: worst half {r['max_us']} us > {WORST_US}")
+    if r["late"]: bad.append(f"FAT 4 + ECHO + SPACE: {r['late']} late halves (underrun)")
     base = run(fw, 4, CHORD, 0)                 # (the chord changes nothing on HOME's screen)
     r = run(fw, 4, (), 4)
     per = (r["bytes"] - base["bytes"]) // 4

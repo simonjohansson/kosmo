@@ -31,7 +31,7 @@ enum {                          /* per-part parameters */
     P_LEVEL,
     P_ATK, P_DEC, P_SUS, P_REL,
     P_ED_FLT, P_ED_PIT, P_ED_SHP,              /* ENV -> filter, pitch, shape amounts */
-    P_REV,                                     /* ROOM reverb send */
+    P_REV,                                     /* SPACE reverb send (AMOUNT) */
     P_VOICE, P_GLIDE, P_PAN, P_MUTE,
     P_GLMODE, P_PRIO, P_ALLOC, P_DETUNE,
     P_FTYPE,                                   /* filter TYPE: LP / BP / HP / NOTCH / COMB (eng_wave.c) */
@@ -41,7 +41,7 @@ enum {                          /* per-part parameters */
 
 enum {                          /* global parameters */
     G_TUNE,                     /* cents */
-    G_RSIZE, G_RDAMP,           /* ROOM reverb */
+    G_RSIZE, G_RTONE, G_RPROG,   /* SPACE reverb: SIZE, TONE, ROOM (program, space.c) */
     G_ETIME, G_EFB, G_ECHAR, G_EAMT,   /* ECHO: TIME, REPEATS, CHARACTER (echo.c), AMOUNT; the order presets.c loads */
     G_COUNT
 };

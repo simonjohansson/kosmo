@@ -21,7 +21,7 @@ PAGE = [("HOME", "h"), ("EDIT", "f5"), ("ENV", "p"), ("ECHO", "f1"), ("SPACE", "
 KNOB = [("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")]
 PRESETS, NOTE = ("f13", "f14"), "z"
 # page -> how many knobs it uses (ui.c PG[])
-USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "ECHO": 4, "SPACE": 2}
+USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "ECHO": 4, "SPACE": 4}
 
 
 def script():
@@ -52,6 +52,9 @@ def script():
         for k in range(USES[page]):
             turn(KNOB[k])
         snap(f"{i:02d}_{page.lower()}_knobs")
+    for name in ("gated", "cloud", "plate", "castle", "bedroom"):
+        turn(KNOB[2][::-1], 1)                              # the SPACE page again: ROOM one program down at a time (WOBBLE was shown above: 3 fast detents)
+        snap(f"05_space_{name}")
     turn(PRESETS, 1)
     snap("06_preset")
     t += 1200 * MS                                          # the name banner is gone

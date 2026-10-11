@@ -17,7 +17,7 @@ import sys
 FUNCS = ["wave_render",                                  # WAVE (eng_wave.c)
          "fm1_alnk0_irq", "fm1_timer5_irq",               # the audio ISR; TIMER5: the key / LED scan (hal/fm1_input.h)
          "uac_tap48",                                       # the USB audio input at 48 kHz: the 44.1 -> 48 resampler (usb.c)
-         "rev_room",                                        # the ROOM reverb bus (fx.c)
+         "space_block",                                      # the SPACE reverb (space.c)
          "echo_block"]                                      # ECHO (echo.c)
 OPTIONAL = {"uac_tap48": 504}   # (absent from a KOSMO_UAC_48K=0 or KOSMO_UAC=0 build)
 TOL = 0.10                      # exact (no noise): small edits pass, a grown render loop does not

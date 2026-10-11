@@ -25,11 +25,14 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
     {B_ENV, "ENV", RGB(60, 230, 255), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
                                         {"Sustain", &trk[0].p[P_SUS], 127, 4}, {"Release", &trk[0].p[P_REL], 127, 4}}},
-    {B_FX, "SPACE", RGB(255, 80, 200), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
+    {B_FX, "SPACE", RGB(255, 80, 200), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4},
+                                    {0, &song.g[G_RPROG], 5, 1}, {"Tone", &song.g[G_RTONE], 127, 4}}},
     {B_FX, "ECHO", RGB(255, 96, 40), {{"Time", &song.g[G_ETIME], 127, 4}, {"Repeats", &song.g[G_EFB], 127, 4},
                                       {0, &song.g[G_ECHAR], 4, 1}, {"Amount", &song.g[G_EAMT], 127, 4}}},
 };
 static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
+static const char *const SP_NAME[6] = {"Bedroom", "Castle", "Plate", "Cloud", "Gated", "Wobble"};   /* the bar is 52 px wide */
+static const char *const SP_FULL[6] = {"BEDROOM", "CASTLE", "METAL PLATE", "CLOUD", "GATED", "WOBBLE"};
 static const char *const EC_NAME[5] = {"Clean", "Crunch", "Toy", "Back", "Robot"};   /* BACKWARDS: the bar is 52 px wide */
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
@@ -166,22 +169,49 @@ static void pic_filter(void)
     glow_pts(200, PG[1].bg);
 }
 
+/* SPACE: the room as a glowing box (SIZE), sound rays leaving its centre and ricocheting off the walls; their number and
+ * how far they get follow the decay (the program's feedback and the line length), the brightness fades along the path.
+ * GATED: the rays stop at the first wall. While notes play the rays breathe (ui_ring). */
 static void pic_space(void)
 {
-    int32_t sz = song.g[G_RSIZE], w = 60 + sz * 150 / 127, h = 40 + sz * 70 / 127, cx = PX + PW / 2, cy = PY + PH / 2;
-    int32_t maxr = h / 2 - 4, i, r;
-    uint16_t c = PG[3].bg, d = ux_mix(0, c, 40);
-    glow_box(cx - w / 2, cy - h / 2, w, h, c);
+    static const int8_t DIR[16][2] = {{62, 16}, {55, 33}, {42, 48}, {16, 62}, {-16, 62}, {-42, 48}, {-55, 33}, {-62, 16},
+                                      {-62, -16}, {-55, -33}, {-42, -48}, {-16, -62}, {16, -62}, {42, -48}, {55, -33}, {62, -16}};
+    const sp_prog_t *p = &SP_PROG[clamp(song.g[G_RPROG], 0, 5)];
+    int32_t sz = song.g[G_RSIZE], w = 60 + sz * 150 / 127, h = 40 + sz * 52 / 127, cx = PX + PW / 2, cy = PY + PH / 2 + 6;
+    int32_t dec = 3276800 / (32768 - p->g) * (p->lo + (p->hi - p->lo) * sz / 127) >> 8;     /* the loops until it is gone (1 / (1 - g)) x SIZE's length, x 100 */
+    int32_t nr = clamp(2 + dec / 250, 3, 6), len = 40 + dec / 4, hw = w / 2, hh = h / 2, j, k;
+    uint16_t c = PG[PG_SPACE].bg;
+    const char *nm = SP_FULL[clamp(song.g[G_RPROG], 0, 5)];
     if (ui_ring)
-        for (i = 0; i < 3; i++) {
-            r = (int32_t)((ui_ring * 3 + (uint32_t)i * (uint32_t)maxr / 3u) % (uint32_t)maxr);
-            if (r > 5) {
-                disc(cx, cy, r + 2, 7, d);
-                disc(cx, cy, r, 3, c);
+        len = len * (70 + (int32_t)ui_ring) / 118;
+    for (j = 0; j < nr; j++) {
+        int32_t d = (j * 16 / nr + (j & 1)) & 15, dx = DIR[d][0], dy = DIR[d][1], x = 0, y = 0, rem = len;
+        for (k = 0; k < 10 && rem > 0; k++) {
+            int32_t tx = ((dx > 0 ? hw : -hw) - x) * 64 / dx, ty = ((dy > 0 ? hh : -hh) - y) * 64 / dy, t = tx < ty ? tx : ty, nx, ny, m;
+            int32_t step = t < rem ? t : rem;
+            nx = x + dx * step / 64;
+            ny = y + dy * step / 64;
+            m = 12 + 88 * rem / len;
+            cv_line_t(cx + x, cy + y, cx + nx, cy + ny, ux_mix(0, c, m), 2);
+            x = nx;
+            y = ny;
+            rem -= step;
+            if (t > step)
+                break;
+            if (tx < ty)
+                dx = -dx;
+            else
+                dy = -dy;
+            if (p->hold) {                        /* GATED: cut off at the wall */
+                cv_rect(cx + x - 2, cy + y - 2, 5, 5, c);
+                break;
             }
         }
-    disc(cx, cy, 8, 0, d);
-    disc(cx, cy, 5, 0, c);
+    }
+    glow_box(cx - hw, cy - hh, w, h, c);
+    disc(cx, cy, 6, 0, ux_mix(0, c, 40));
+    disc(cx, cy, 3, 0, c);
+    cv_text(PX + 6, PY + 4, &AF_S, nm, c);
 }
 
 /* ECHO: a row of copies of the waveform, each one smaller and dimmer: the spacing is TIME, the fade REPEATS, the whole
@@ -252,7 +282,7 @@ static void scene(void)
         if (!ui_hit(bar_rc(i)))
             continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
-        const char *name = k->name ? k->name : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : FT_NAME[ty];
+        const char *name = k->name ? k->name : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);

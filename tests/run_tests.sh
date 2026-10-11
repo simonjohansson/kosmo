@@ -5,7 +5,7 @@
 #   tests/run_tests.sh
 #
 # Regression suite (tests/regress.c, tests/target_budget.py; details at the top of regress.c):
-#   golden renders  the test sounds (tests/hostsim.c), each WAVE, the filter TYPEs, voice modes, the ROOM reverb, the
+#   golden renders  the test sounds (tests/hostsim.c), each WAVE, the filter TYPEs, voice modes, the SPACE reverb, the
 #                   keys with OCT-/OCT+ and MIDI: one hash each in tests/golden.txt. A change of the sound fails with
 #                   the list of renders.
 #   health          clipping, DC, peak level, voices free after the release, silence at the end.

@@ -4,7 +4,7 @@
  *   build/host/regress [GOLDEN_FILE CPU_FILE]      (run_tests.sh builds and runs it)
  *
  * 1. golden renders: every test sound (hostsim.c HOST_SOUNDS: the WAVE sounds), each WAVE, the filter TYPEs
- *    (LP / BP / HP / NOTCH / COMB), the voice modes (POLY / MONO / LEGATO / UNISON), the ROOM reverb (send, SIZE, DAMP), the keys with
+ *    (LP / BP / HP / NOTCH / COMB), the voice modes (POLY / MONO / LEGATO / UNISON), the SPACE reverb (send, SIZE, TONE, ROOM), the keys with
  *    OCT-/OCT+, and MIDI (notes, bend, sustain). Each render plays a fixed phrase (notes, an overlap, a chord, note-offs,
  *    the release tail) and is reduced to a 64-bit FNV-1a hash of its output samples, compared with GOLDEN_FILE
  *    (tests/golden.txt). Every render runs in its own fork()ed child of a process that never touched the DSP state, so all
@@ -198,14 +198,16 @@ static void job_mode(const job_t *j)            /* arg: the voice mode, glide on
     phrase(t, 60);
 }
 
-static void job_reverb(const job_t *j)          /* arg: the send, SIZE and DAMP */
+static void job_reverb(const job_t *j)          /* arg: the send, SIZE, TONE and SPACE program */
 {
-    static const int16_t S[5][3] = {{0, 90, 60}, {40, 90, 60}, {127, 90, 60}, {80, 95, 20}, {80, 0, 127}};
+    static const int16_t S[10][4] = {{0, 90, 64, 0}, {40, 90, 64, 0}, {127, 90, 64, 0}, {80, 95, 127, 0}, {80, 0, 0, 0},
+                                     {10, 20, 64, 1}, {10, 20, 64, 2}, {10, 20, 64, 3}, {10, 20, 64, 4}, {10, 20, 64, 5}};
     host_tracks_init();
     host_sound(&trk[0], j->pi);
     trk[0].p[P_REV] = S[j->arg][0];
     song.g[G_RSIZE] = S[j->arg][1];
-    song.g[G_RDAMP] = S[j->arg][2];
+    song.g[G_RTONE] = S[j->arg][2];
+    song.g[G_RPROG] = S[j->arg][3];
     phrase(&trk[0], 60);
 }
 
@@ -636,18 +638,19 @@ static int chk_filters(char *msg, uint32_t n)
     return !R.over && R.free_s >= 0 && R.tail_peak <= LIM_TAIL;
 }
 
-/* the reverb at its largest SIZE and full send: a burst, then the tail decays to near zero within 12 s */
-static int chk_reverb(char *msg, uint32_t n)
+/* SPACE (issue #21), program p at its largest SIZE and full send: a burst, then the tail decays to near zero within 12 s */
+static int space_decay(char *msg, uint32_t n, int p)
 {
     track_t *t = &trk[0];
     int32_t early;
     host_tracks_init();
     t->p[P_REV] = 127;
     song.g[G_RSIZE] = 127;
+    song.g[G_RPROG] = (int16_t)p;
     trk_note_on(t, 60, 127);
     run_to(at(0.2));
     trk_note_off(t, 60);
-    run_to(at(1.2));
+    run_to(at(0.4));
     tail_from = fpos;
     R.tmin = 0x7FFFFFFF;
     R.tmax = -0x7FFFFFFF;
@@ -659,9 +662,129 @@ static int chk_reverb(char *msg, uint32_t n)
     R.tmax = -0x7FFFFFFF;
     run_to(fpos + FS / 4u);
     R.tail_peak = (R.tmax - R.tmin + 1) / 2;
-    snprintf(msg, n, "reverb SIZE 127, send 127: tail AC %d at 1 s, %d at 12 s (limit %d), %u samples beyond 16 bits",
-             early, R.tail_peak, LIM_TAIL, R.over);
-    return early > LIM_TAIL && R.tail_peak <= LIM_TAIL && !R.over;
+    snprintf(msg, n, "SPACE program %d, SIZE 127, send 127: tail AC %d at 0.4 s, %d at 12 s (limit %d), %u samples beyond 16 bits",
+             p, early, R.tail_peak, LIM_TAIL, R.over);
+
+}
+#define SPACE_DECAY(p) static int chk_space_decay##p(char *m, uint32_t n) { return space_decay(m, n, p); }
+SPACE_DECAY(0) SPACE_DECAY(1) SPACE_DECAY(2) SPACE_DECAY(3) SPACE_DECAY(4) SPACE_DECAY(5)
+
+/* no overflow at the largest SIZE and a full-scale input: a loud chord, every program, 16 bits at the output, and the
+ * tank itself never sits on a rail for long */
+static int chk_space_full(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t p, k, rail = 0;
+    int32_t pk = 0;
+    for (p = 0; p < SP_NPROG; p++) {
+        host_tracks_init();
+        t->p[P_REV] = 127;
+        t->p[P_LEVEL] = 127;
+        t->p[P_VOICE] = V_POLY;
+        t->p[P_E4] = 4;
+        song.g[G_RSIZE] = 127;
+        song.g[G_RPROG] = (int16_t)p;
+        for (k = 0; k < 8u; k++)
+            trk_note_on(t, (uint8_t)(48 + 4u * k), 127);
+        R.peak = 0;
+        run_to(fpos + 3u * FS / 2u);
+        pk = R.peak > pk ? R.peak : pk;
+        for (k = 0; k < 4u * SP_N; k++)
+            rail += sp_line[k / SP_N][k % SP_N] >= 32767 || sp_line[k / SP_N][k % SP_N] <= -32767;
+        for (k = 0; k < 8u; k++)
+            trk_note_off(t, (uint8_t)(48 + 4u * k));
+        run_to(fpos + FS / 2u);
+    }
+    snprintf(msg, n, "SPACE at SIZE 127, send 127, 8 loud notes, all programs: peak %d, %u samples beyond 16 bits, %u tank samples on a rail",
+             pk, R.over, rail);
+    return !R.over && !rail;
+}
+
+/* the tank on its own: an impulse (or noise) into space_block, the left output; fills sp_y with n samples */
+#define SP_Y (FS)
+static int32_t sp_y[SP_Y];
+static void space_run(int p, int size, int tone, int noise_ms)
+{
+    int32_t in[CTL], wr_[CTL];
+    uint32_t i, f = 0, seed = 12345;
+    space_clear();
+    song.g[G_RPROG] = (int16_t)p;
+    song.g[G_RSIZE] = (int16_t)size;
+    song.g[G_RTONE] = (int16_t)tone;
+    for (f = 0; f < SP_Y; f += CTL) {
+        for (i = 0; i < CTL; i++) {
+            seed = seed * 1664525u + 1013904223u;
+            in[i] = noise_ms ? (f + i < (uint32_t)noise_ms * 44u ? (int32_t)(seed >> 17) - 16384 : 0) : (f + i == 0 ? 20000 : 0);
+        }
+        space_block(in, sp_y + f, wr_, CTL);
+    }
+}
+
+/* the fraction of the samples in [a, a + 20 ms) above half of that window's rms: a lone spike gives ~0, noise ~0.6 */
+static double space_dens(double a)
+{
+    uint32_t i, s = (uint32_t)(a * FS), e = s + FS / 50u, c = 0;
+    double sum = 0;
+    for (i = s; i < e; i++)
+        sum += (double)sp_y[i] * sp_y[i];
+    sum = sqrt(sum / (e - s));
+    for (i = s; i < e; i++)
+        c += fabs((double)sp_y[i]) > sum / 2;
+    return (double)c / (e - s);
+}
+
+/* echo density rises: the first echoes are separate, later ones merge into a noise-like tail (every program) */
+static int chk_space_density(char *msg, uint32_t n)
+{
+    int p, ok = 1, o = 0;
+    for (p = 0; p < SP_NPROG; p++) {
+        double d0, d1;
+        space_run(p, 64, 64, 0);
+        d0 = space_dens(0.005);
+        d1 = space_dens(0.120);
+        ok &= d1 > d0 + 0.1 && d1 > 0.3;
+        o += snprintf(msg + o, n - (uint32_t)o, "%s%d: %.2f -> %.2f", p ? ", " : "echo density of the impulse response, program ", p, d0, d1);
+    }
+    return ok;
+}
+
+/* GATED: after the input stops the gate holds, then shuts: silent within the window; CASTLE still rings then */
+static int chk_space_gated(char *msg, uint32_t n)
+{
+    int32_t during, after, castle;
+    uint32_t i;
+    space_run(SP_GATED, 127, 64, 250);
+    for (during = after = 0, i = 11025; i < 16000; i++)
+        during = abs(sp_y[i]) > during ? abs(sp_y[i]) : during;
+    for (i = 35280; i < FS; i++)
+        after = abs(sp_y[i]) > after ? abs(sp_y[i]) : after;
+    space_run(SP_CASTLE, 127, 64, 250);
+    for (castle = 0, i = 35280; i < FS; i++)
+        castle = abs(sp_y[i]) > castle ? abs(sp_y[i]) : castle;
+    snprintf(msg, n, "GATED after a 250 ms burst: peak %d just after it, %d from 0.8 s on (CASTLE %d)", during, after, castle);
+    return during > 500 && after <= 2 && castle > 100;
+}
+
+/* TONE tilts the tail: the share of the energy in the first difference (the high end) of a noise burst's tail */
+static int chk_space_tone(char *msg, uint32_t n)
+{
+    double r[3];
+    uint32_t i, t, p, ok = 1, o = 0;
+    for (p = 0; p < 3u; p++) {
+        static const int P[3] = {SP_BEDROOM, SP_PLATE, SP_CLOUD};
+        for (t = 0; t < 3u; t++) {
+            double e = 1e-9, d = 0;
+            space_run(P[p], 64, t * 64u, 100);
+            for (i = 8000; i < 30000; i++) {
+                e += (double)sp_y[i] * sp_y[i];
+                d += (double)(sp_y[i] - sp_y[i - 1]) * (sp_y[i] - sp_y[i - 1]);
+            }
+            r[t] = d / e;
+        }
+        ok &= r[0] < r[1] && r[1] < r[2] && r[2] > 1.8 * r[0];
+        o += snprintf(msg + o, n - (uint32_t)o, "%sprogram %d TONE 0 / 64 / 127: HF share %.3f / %.3f / %.3f", p ? "; " : "", P[p], r[0], r[1], r[2]);
+    }
+    return ok;
 }
 
 static uint32_t mode_release_gates(void);
@@ -1195,7 +1318,7 @@ int main(int argc, char **argv)
     static const char *const MN[4] = {"POLY", "MONO", "LEGATO", "UNISON"};
     static const char *const FN[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
     static const char *const EN[5] = {"CLEAN", "CRUNCH", "TOY", "BACKWARDS", "ROBOT"};
-    static const char *const RN[5] = {"dry", "send40", "send127", "big_bright", "small_dark"};
+    static const char *const RN[10] = {"dry", "send40", "send127", "big_bright", "small_dark", "castle", "plate", "cloud", "gated", "wobble"};
     static const uint8_t MODE_S[3] = {0, 1, 3}, REV_S[2] = {1, 2}, FILT_S[3] = {0, 3, 5};
     static kv_t gold[MAXJ], cpu[MAXJ];
     uint32_t ng, nc, pi, i, g0, g1, c0, c1, k0, heavy_i = 0;
@@ -1239,7 +1362,7 @@ int main(int argc, char **argv)
             j->arg = (uint8_t)k0;
         }
     for (i = 0; i < 2u; i++)
-        for (k0 = 0; k0 < 5u; k0++) {
+        for (k0 = 0; k0 < 10u; k0++) {
             job_t *j;
             slug(s, HOST_SOUNDS[REV_S[i]].name, sizeof s);
             snprintf(name, sizeof name, "reverb/%s/%s", s, RN[k0]);
@@ -1271,7 +1394,16 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
-    add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
+    add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;
+    add(J_CHECK, "space: CASTLE tail decays")->check = chk_space_decay1;
+    add(J_CHECK, "space: METAL PLATE tail decays")->check = chk_space_decay2;
+    add(J_CHECK, "space: CLOUD tail decays")->check = chk_space_decay3;
+    add(J_CHECK, "space: GATED tail decays")->check = chk_space_decay4;
+    add(J_CHECK, "space: WOBBLE tail decays")->check = chk_space_decay5;
+    add(J_CHECK, "space: no overflow at max SIZE and full input")->check = chk_space_full;
+    add(J_CHECK, "space: echo density rises")->check = chk_space_density;
+    add(J_CHECK, "space: GATED stops in its window")->check = chk_space_gated;
+    add(J_CHECK, "space: TONE tilts the spectrum")->check = chk_space_tone;
     add(J_CHECK, "wave: FAT copies and DETUNE")->check = chk_fat;
     add(J_CHECK, "wave: FAT live on held notes")->check = chk_fat_live;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
