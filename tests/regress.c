@@ -510,6 +510,33 @@ static int chk_filters(char *msg, uint32_t n)
     return !R.over && R.free_s >= 0 && R.tail_peak <= LIM_TAIL;
 }
 
+/* the reverb at its largest SIZE and full send: a burst, then the tail decays to near zero within 12 s */
+static int chk_reverb(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    int32_t early;
+    host_tracks_init();
+    t->p[P_REV] = 127;
+    song.g[G_RSIZE] = 127;
+    trk_note_on(t, 60, 127);
+    run_to(at(0.2));
+    trk_note_off(t, 60);
+    run_to(at(1.2));
+    tail_from = fpos;
+    R.tmin = 0x7FFFFFFF;
+    R.tmax = -0x7FFFFFFF;
+    run_to(fpos + FS / 4u);
+    early = (R.tmax - R.tmin + 1) / 2;
+    run_to(fpos + 11u * FS);
+    tail_from = fpos;
+    R.tmin = 0x7FFFFFFF;
+    R.tmax = -0x7FFFFFFF;
+    run_to(fpos + FS / 4u);
+    R.tail_peak = (R.tmax - R.tmin + 1) / 2;
+    snprintf(msg, n, "reverb SIZE 127, send 127: tail AC %d at 1 s, %d at 12 s (limit %d), %u samples beyond 16 bits",
+             early, R.tail_peak, LIM_TAIL, R.over);
+    return early > LIM_TAIL && R.tail_peak <= LIM_TAIL && !R.over;
+}
 
 /* Voices held before a mode change must remain reclaimable except for the lead. */
 static int chk_mode_budget(char *msg, uint32_t n)
@@ -812,6 +839,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
+    add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
     run_jobs(J, nj, jobs_at_once);
 
     /* 3: CPU, one child at a time (the ns are for information; the instruction counts do not care) */
