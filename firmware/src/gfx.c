@@ -68,11 +68,16 @@ typedef struct { uint16_t off; uint8_t w; const char *label; } kc_t;
 #define AL_N(n) ((uint32_t)(n) << 8)
 
 #define CV_MAX (240u * 124u)      /* the graph strip is 240 x 124 */
-static uint16_t cv_px[CV_MAX] __attribute__((section(".pool")));
+/* two canvases: cv_begin takes the one the last blit is not reading, so the next strip is drawn while the previous
+ * one goes out over the SPI (lcd.c: a blit completes at the next LCD access) */
+static uint16_t cv_buf[2][CV_MAX] __attribute__((section(".pool")));
+static uint16_t *cv_px = cv_buf[0];
+static uint8_t cv_sent = 1;      /* the canvas was blitted */
 static uint32_t cv_w, cv_h;
 static uint16_t cv_bg;           /* what cv_begin cleared the canvas to */
 static uint8_t cv_scroll;        /* 1: drawing a scrolled view (its text may run past the canvas) */
 static int32_t cv_oy;            /* y offset for graph drawing */
+static int32_t cv_ox;            /* the same for x: a canvas narrower than the screen (ui.c ui_rect) */
 static int16_t cv_cy0, cv_cy1;   /* text clip: canvas rows cv_cy0 .. cv_cy1 - 1 (cv_begin: the whole canvas) */
 static uint8_t cv_flip;          /* cv_alpha_hc: the cell mirrored left <-> right (the header's metronome, ui_draw.c) */
 
@@ -176,7 +181,10 @@ static void cv_begin(uint32_t w, uint32_t h, uint16_t bg)
     uint16_t s = swap16(bg);
     if (w * h > CV_MAX)
         h = CV_MAX / w;
-    lcd_sync();                     /* the last blit may still read cv_px */
+    cv_px = cv_px == cv_buf[0] ? cv_buf[1] : cv_buf[0];
+    if (!cv_sent)
+        lcd_sync();                 /* the last canvas was never blitted: this one is the buffer a blit may still read */
+    cv_sent = 0;
     GFX_HOOK_BEGIN();
     cv_w = w;
     cv_h = h;
@@ -191,6 +199,7 @@ static void cv_begin(uint32_t w, uint32_t h, uint16_t bg)
 static void cv_blit(uint32_t x, uint32_t y)
 {
     GFX_HOOK_BLIT(x, y, 0u);
+    cv_sent = 1;
     lcd_blit(x, y, cv_w, cv_h, cv_px);
 }
 
@@ -198,12 +207,14 @@ static void cv_blit(uint32_t x, uint32_t y)
 static void cv_blit_from(uint32_t x, uint32_t y, uint32_t r0)
 {
     GFX_HOOK_BLIT(x, y, r0);
+    cv_sent = 1;
     if (r0 < cv_h)
         lcd_blit(x, y + r0, cv_w, cv_h - r0, cv_px + r0 * cv_w);
 }
 
 static inline void cv_pset(int32_t x, int32_t y, uint16_t c)
 {
+    x += cv_ox;
     y += cv_oy;
     if ((uint32_t)x < cv_w && (uint32_t)y < cv_h)
         cv_px[(uint32_t)y * cv_w + (uint32_t)x] = swap16(c);
@@ -211,8 +222,9 @@ static inline void cv_pset(int32_t x, int32_t y, uint16_t c)
 
 static void cv_rect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
 {
-    int32_t x1 = x + w, y1 = y + h + cv_oy, i;
+    int32_t x1 = x + w + cv_ox, y1 = y + h + cv_oy, i;
     uint16_t sc = swap16(c);
+    x += cv_ox;
     y += cv_oy;                             /* clipped once, then filled row by row */
     if (x < 0)
         x = 0;
@@ -368,6 +380,7 @@ static const uint16_t *ramp(uint16_t fg, uint16_t bg)
 static void cv_alpha(int32_t x, int32_t y, uint32_t w, uint32_t h, const uint8_t *d, const uint16_t *rv)
 {
     uint32_t k = 0, gx, gy;
+    x += cv_ox;
     y += cv_oy;
     for (gy = 0; gy < h; gy++) {
         int32_t py = y + (int32_t)gy;
@@ -418,6 +431,7 @@ static void cv_alpha_hc(int32_t x, int32_t y, uint32_t w, uint32_t h, const uint
 {
     const uint16_t *lut = hc_lut(hc);
     uint32_t gy, v = 0, run = 0, acc = 0, nb = 0;
+    x += cv_ox;
     y += cv_oy;
     for (gy = 0; gy < h; gy++) {
         int32_t py = y + (int32_t)gy;

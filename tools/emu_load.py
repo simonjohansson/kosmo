@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Guest load in fm1-emulator (issue #17): a C-E-G chord on HOME at FAT 0 and FAT 4, then the firmware's own load
 meter (felucca_dbg in the SRAM dump, written by the audio ISR); and the length of a WAVE redraw at FAT 4 in guest
-instructions (traced at cv_begin / cv_blit). Fails above the limits below.
+instructions (traced at cv_begin / cv_blit). Also the UI of one WAVE knob step (issue #17): bytes sent over the SPI, the time to
+the bar and to the picture, and that a burst of detents 25 ms apart (faster than a redraw) lands on the right value.
+Fails above the limits below.
 
     tools/emu_load.py [FIRMWARE]      (FM1_EMULATOR: emulator binary, default ~/src/fm1-emulator/emulator)
 
@@ -18,7 +20,12 @@ SRAM = 0x01C00000
 HALF_US = 128 * 10**6 // 44100
 LOAD_MAX = {0: 25, 4: 45}           # % of a half, 93 ms average with the chord held (measured 21.5 / 40.6)
 WORST_US = HALF_US * 85 // 100      # above this the firmware sheds voices
-REDRAW_MAX = 6_500_000              # instructions, first cv_begin to the last cv_blit of a WAVE redraw at FAT 4 (measured 6.1 M, mostly the SPI DMA wait)
+STEP_BYTES_MAX = 66_000             # SPI bytes of one DETUNE step on HOME: the bar (58 x 60) and the picture (224 x 122), measured 61.6 K (96 K before)
+BAR_MS_MAX = 15                     # last contact of the detent to the bar on the panel (measured 5.8; 74 ms to the whole redraw before)
+PIC_MS_MAX = 40                     # from the bar on the panel to the picture on it (measured 35.5: its DMA at 12 MHz)
+BAR_BYTES = 58 * 60 * 2
+BURST = 12                          # detents 25 ms apart: DETUNE must move BURST * 4
+SPI_BPS = 12_000_000 // 8
 K3, K4 = ("f19", "f20"), ("f21", "f22")   # HOME knobs (tools/emu_check.py)
 CHORD = ("z", "m", "slash")
 
@@ -27,21 +34,21 @@ def sym(elf, name):
     return int(re.search(rf"^([0-9a-f]+) . {name}$", subprocess.run(["nm", str(elf)], capture_output=True, text=True, check=True).stdout, re.M).group(1), 16)
 
 
-def detents(ev, t, knob, n):
+def detents(ev, t, knob, n, gap=120):
     a, b = knob
     for _ in range(n):               # clockwise detent, as emu_check.py; 120 ms apart: the UI misses faster ones while it redraws
         ev += [(t, b, 1), (t + 5 * MS, a, 1), (t + 10 * MS, b, 0), (t + 15 * MS, a, 0)]
-        t += 120 * MS
+        t += gap * MS
     return t
 
 
-def run(fw, fat, chord, steps):
+def run(fw, fat, chord, steps, gap=120):
     ev = []
     t = detents(ev, 19 * S, K3[::-1], 4)            # FAT is 2 after boot: down to 0 ...
     detents(ev, t, K3, fat)                          # ... then up
     for k in chord:
         ev += [(20 * S, k, 1), (26 * S, k, 0)]
-    detents(ev, 20 * S, K4, steps)                   # DETUNE: each step is one WAVE redraw
+    detents(ev, 20 * S, K4, steps, gap)                   # DETUNE: each step is one WAVE redraw
     elf = fw.with_suffix(".elf")
     pcs = f"{sym(elf, 'cv_begin'):x},{sym(elf, 'cv_blit'):x}" if steps else ""
     d = Path(tempfile.mkdtemp(dir=ROOT / "build"))
@@ -54,18 +61,13 @@ def run(fw, fat, chord, steps):
            "-display", "none", "-chardev", "null,id=console", "-serial", "chardev:console", "-monitor", "none", "-nodefaults",
            "-no-user-config", "-kernel", str(fw), "-append", "application"]
     err = subprocess.run(cmd, env=env, capture_output=True, text=True).stderr
-    dbg = struct.unpack_from("<11I", (d / "state.sram").read_bytes(), sym(elf, "felucca_dbg") - SRAM)
+    ram = (d / "state.sram").read_bytes()
+    dbg = struct.unpack_from("<11I", ram, sym(elf, "felucca_dbg") - SRAM)
     shutil.rmtree(d)
     tr = [(int(a), int(b, 16)) for a, b in re.findall(r"TRACE core\d n=(\d+) pc=([0-9a-f]+) .* irq=0", err)] if steps else []
-    return dict(halves=dbg[1], max_us=dbg[2], late=dbg[5], load=dbg[9] * 100 / 256, trace=tr)
-
-
-def redraw(tr, begin, blit):
-    """Instructions from a frame's first cv_begin to its second cv_blit: the last complete frame."""
-    ev = [(n, "b" if pc == begin else "k") for n, pc in tr if pc in (begin, blit)]
-    s = "".join(k for _, k in ev)
-    i = s.rfind("bkbk")
-    return ev[i + 3][0] - ev[i][0] if i >= 0 else None
+    return dict(halves=dbg[1], max_us=dbg[2], late=dbg[5], load=dbg[9] * 100 / 256, trace=tr,
+                detune=struct.unpack_from("<h", ram, sym(elf, "ui_sig") - SRAM + 8)[0],
+                bytes=struct.unpack_from("<I", ram, sym(elf, "lcd_bytes") - SRAM)[0])
 
 
 def main():
@@ -79,10 +81,25 @@ def main():
         if r["load"] > LOAD_MAX[fat]: bad.append(f"FAT {fat}: load {r['load']:.1f}% > {LOAD_MAX[fat]}%")
         if r["max_us"] > WORST_US: bad.append(f"FAT {fat}: worst half {r['max_us']} us > {WORST_US}")
         if r["late"]: bad.append(f"FAT {fat}: {r['late']} late halves (underrun)")
+    base = run(fw, 4, CHORD, 0)                 # (the chord changes nothing on HOME's screen)
     r = run(fw, 4, (), 4)
-    n = redraw(r["trace"], sym(elf, "cv_begin"), sym(elf, "cv_blit"))
-    print(f"WAVE redraw at FAT 4: {n} instructions (max {REDRAW_MAX})")
-    if n is None or n > REDRAW_MAX: bad.append(f"WAVE redraw {n} instructions > {REDRAW_MAX}")
+    per = (r["bytes"] - base["bytes"]) // 4
+    ev = [(n * 8, "b" if pc == sym(elf, "cv_begin") else "k") for n, pc in r["trace"]]
+    s = "".join(k for _, k in ev)
+    i = s.rfind("bkbkbk")
+    t = [x for x, _ in ev[i:i + 6]] if i >= 0 else [0] * 6          # bar begin / blit, then two picture strips
+    last = 20 * S + 3 * 120 * MS + 15 * MS                             # the 4th detent's last contact
+    half = (per - BAR_BYTES) // 2
+    bar = (t[1] + BAR_BYTES * S // SPI_BPS - last) / MS
+    pic = (max(t[5], t[3] + half * S // SPI_BPS) + half * S // SPI_BPS - t[1] - BAR_BYTES * S // SPI_BPS) / MS
+    print(f"WAVE knob step at FAT 4: {per} SPI bytes (max {STEP_BYTES_MAX}), bar after {bar:.1f} ms (max {BAR_MS_MAX}), picture after the bar {pic:.1f} ms (max {PIC_MS_MAX})")
+    if per > STEP_BYTES_MAX: bad.append(f"knob step {per} SPI bytes > {STEP_BYTES_MAX}")
+    if not 0 < bar <= BAR_MS_MAX: bad.append(f"bar {bar:.1f} ms > {BAR_MS_MAX}")
+    if not 0 < pic <= PIC_MS_MAX: bad.append(f"picture {pic:.1f} ms > {PIC_MS_MAX}")
+    b = run(fw, 4, CHORD, BURST, 25)               # chord held, so the audio runs too; the UI redraws while the detents come
+    want = min(127, base["detune"] + 4 * BURST)
+    print(f"{BURST} detents 25 ms apart: DETUNE {base['detune']} -> {b['detune']} (want {want})")
+    if b["detune"] != want: bad.append(f"detent burst: DETUNE {b['detune']}, want {want}")
     print("\n".join("FAIL: " + b for b in bad) or "PASS")
     return 1 if bad else 0
 

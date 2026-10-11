@@ -2,8 +2,9 @@
 /* The kids' UI: four pages, one function button each (its LED is lit while the page shows):
  *   HOME WAVE (wave, scan, fat, detune) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX SPACE (amount, size)
  * K1..K4 turn the bars at the bottom. OCT-/OCT+ shift the keys (both together: back to the middle).
- * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in two 240 x 120
- * strips (cv_oy shifts screen coordinates into the strip) and only when something it shows has changed. */
+ * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in
+ * strips of a rectangle (cv_ox / cv_oy shift screen coordinates into the strip) and only what changed: a knob step sends its bar and the picture
+ * (and the WAVE title when the wave changed), a page or banner change the whole screen. */
 
 #include "fcurve.c"                 /* the FILTER page's response curve */
 
@@ -28,6 +29,26 @@ static uint32_t ui_banner;                  /* the preset banner shows until thi
 static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
 static uint32_t ui_last, ui_ring;           /* last redraw (ms), ring animation step */
 static int8_t ui_led = -1;
+typedef struct { int16_t x, y, w, h; } rc_t;
+static rc_t ui_cr;                          /* the rectangle being drawn: scene() leaves out what does not touch it */
+#define R_TITLE ((rc_t){0, 0, 240, 40})
+#define R_PIC ((rc_t){PX, PY, PW + 4, ui_page == 2 ? 128 : 122})   /* what a picture draws lies inside (ENV's letters hang below the panel) */
+static int ui_hit(rc_t r)
+{
+    return r.x < ui_cr.x + ui_cr.w && r.x + r.w > ui_cr.x && r.y < ui_cr.y + ui_cr.h && r.y + r.h > ui_cr.y;
+}
+static int32_t ui_nk(void)
+{
+    int32_t n = 0;
+    while (n < 4 && PG[ui_page].k[n].v)
+        n++;
+    return n;
+}
+static rc_t bar_rc(int32_t i)               /* knob i's bar and name, 3 px of the gap on each side */
+{
+    int32_t n = ui_nk(), bw = (226 - 6 * (n - 1)) / n;
+    return (rc_t){(int16_t)(4 + i * (bw + 6)), 170, (int16_t)(bw + 6), 60};
+}
 
 static int32_t isq(int32_t n)
 {
@@ -173,16 +194,19 @@ static void banner(void)
 static void scene(void)
 {
     uint16_t bg = PG[ui_page].bg, track = ux_mix(0, bg, 20);
-    int32_t n = 0, i, gap = 6, bw, ty = clamp(trk[0].p[P_FTYPE], 0, 4);
+    int32_t n = ui_nk(), i, gap = 6, bw, ty = clamp(trk[0].p[P_FTYPE], 0, 4);
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
-    while (n < 4 && PG[ui_page].k[n].v)
-        n++;
-    cv_text(12, 4, &AF_L, title, bg);
-    graticule(PX, PY, PW, PH, bg);
-    (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : pic_space)();
+    if (ui_hit(R_TITLE))
+        cv_text(12, 4, &AF_L, title, bg);
+    if (ui_hit(R_PIC)) {
+        graticule(PX, PY, PW, PH, bg);
+        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : pic_space)();
+    }
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
         const kn_t *k = &PG[ui_page].k[i];
+        if (!ui_hit(bar_rc(i)))
+            continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
         const char *name = k->name ? k->name : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
@@ -190,25 +214,27 @@ static void scene(void)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
         cv_text(x + (bw - text_w(&AF_M, name)) / 2, 212, &AF_M, name, bg);
     }
-    if (ui_banner)
+    if (ui_banner && ui_hit((rc_t){0, 78, 240, 74}))
         banner();
 }
 
-static void ui_draw(uint32_t top)               /* rows top .. 239 (the title above PY is only redrawn when it changed) */
+static void ui_rect(rc_t r)                     /* draw the screen's rectangle r, in strips that fit the canvas */
 {
-    uint32_t y0, h;
-    int32_t i;
+    int32_t rows = 64, n = (r.h + rows - 1) / rows, h = (r.h + n - 1) / n, y0;
     if (ux.mono) {                             /* the GREY palette mixes to grey: these pages are in colour */
         ux.mono = 0;
         ux.gen++;
     }
-    for (y0 = top; y0 < 240u; y0 += 120u) {
-        h = 240u - y0 < 120u ? 240u - y0 : 120u;
-        cv_begin(240, h, 0);
-        cv_oy = -(int32_t)y0;
+    for (y0 = r.y; y0 < r.y + r.h; y0 += h) {
+        if (y0 + h > r.y + r.h)
+            h = r.y + r.h - y0;
+        ui_cr = (rc_t){r.x, (int16_t)y0, r.w, (int16_t)h};
+        cv_begin((uint32_t)r.w, (uint32_t)h, 0);
+        cv_ox = -r.x;
+        cv_oy = -y0;
         scene();
-        cv_oy = 0;
-        cv_blit(0, y0);
+        cv_ox = cv_oy = 0;
+        cv_blit((uint32_t)r.x, (uint32_t)y0);
     }
 }
 
@@ -223,7 +249,7 @@ static void ui_input(void)
 {
     uint32_t pressed = fm1_input_edges(0), i, active = 0;
     uint32_t dn = 1u << panel.btn[B_OCTDN], up = 1u << panel.btn[B_OCTUP];
-    int16_t sig[7] = {0};
+    int16_t sig[7] = {0}, old[7];
     int32_t pst;
     if ((pressed & (dn | up)) && (fm1_in.buttons & (dn | up)) == (dn | up))
         song.octave = 0;
@@ -266,11 +292,22 @@ static void ui_input(void)
         sig[1 + i] = PG[ui_page].k[i].v ? *PG[ui_page].k[i].v : 0;
     sig[5] = (int16_t)ui_ring;
     sig[6] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
-    if (!memcmp(sig, ui_sig, sizeof sig) || fm1_ms - ui_last < 40u)
+    if (!memcmp(sig, ui_sig, sizeof sig))
         return;
-    /* a knob step on the same page leaves the title (the WAVE name on HOME) alone: 17 % less to send over the SPI */
-    i = ui_sig[0] != sig[0] || (sig[0] == 0 && ui_sig[1] != sig[1]) ? 0u : PY;
-    memcpy(ui_sig, sig, sizeof sig);
     ui_last = fm1_ms;
-    ui_draw(i);
+    if (ui_sig[0] != sig[0] || ui_sig[6] != sig[6]) {          /* a new page, or the banner: all of it */
+        memcpy(ui_sig, sig, sizeof sig);
+        ui_rect((rc_t){0, 0, 240, 240});
+        return;
+    }
+    /* a knob step: its bar first (the quick feedback), then the picture, which always shows the latest state, so steps
+     * that came in meanwhile are drawn once. The WAVE title changes with the wave only */
+    memcpy(old, ui_sig, sizeof old);
+    memcpy(ui_sig, sig, sizeof sig);
+    for (i = 0; i < 4u; i++)
+        if (old[1 + i] != sig[1 + i] && PG[ui_page].k[i].v)
+            ui_rect(bar_rc((int32_t)i));
+    if (ui_page == 0 && old[1] != sig[1])
+        ui_rect(R_TITLE);
+    ui_rect(R_PIC);
 }

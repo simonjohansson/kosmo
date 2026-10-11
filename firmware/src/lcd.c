@@ -12,6 +12,7 @@
 #endif
 
 static uint8_t lcd_small[64];
+static uint32_t lcd_bytes;         /* sent over the SPI since boot (tools/emu_load.py reads it) */
 static uint8_t lcd_busy;           /* a lcd_data DMA may still run; CS is low */
 
 static void lcd_spin(uint32_t n)
@@ -42,6 +43,7 @@ static void lcd_data(const void *p, uint32_t n)
     if (!n)
         return;                    /* SPI_CNT = 0 never completes */
     lcd_sync();
+    lcd_bytes += n;
     fm1_lcd_send_data(p, n);
     lcd_busy = 1;                  /* completed by lcd_sync */
 }
