@@ -4,7 +4,7 @@
  *   build/host/regress [GOLDEN_FILE CPU_FILE]      (run_tests.sh builds and runs it)
  *
  * 1. golden renders: every test sound (hostsim.c HOST_SOUNDS: the WAVE sounds), each WAVE, the filter TYPEs
- *    (LP / BP / HP / NOTCH), the voice modes (POLY / MONO / LEGATO / UNISON), the ROOM reverb (send, SIZE, DAMP), the keys with
+ *    (LP / BP / HP / NOTCH / COMB), the voice modes (POLY / MONO / LEGATO / UNISON), the ROOM reverb (send, SIZE, DAMP), the keys with
  *    OCT-/OCT+, and MIDI (notes, bend, sustain). Each render plays a fixed phrase (notes, an overlap, a chord, note-offs,
  *    the release tail) and is reduced to a 64-bit FNV-1a hash of its output samples, compared with GOLDEN_FILE
  *    (tests/golden.txt). Every render runs in its own fork()ed child of a process that never touched the DSP state, so all
@@ -22,6 +22,7 @@
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
+#include "../firmware/src/fcurve.c"
 #ifdef __APPLE__
 #include <libproc.h>
 #include <sys/resource.h>
@@ -281,6 +282,7 @@ static void job_cpu(const job_t *j)
     host_sound(&trk[0], j->pi);
     trk[0].p[P_VOICE] = V_POLY;
     trk[0].p[P_SUS] = 127;
+    trk[0].p[P_FTYPE] = j->arg;
     for (i = 0; i < j->cpu_notes; i++)
         trk_note_on(&trk[0], NOTES[i], 100);
     for (k = 0; k < nb / 2u + nb; k++) {
@@ -481,13 +483,85 @@ static int chk_scan(char *msg, uint32_t n)
     return !bad;
 }
 
+/* a sine at column x of the FILTER page through the real filter (ft, CUT, RES): its gain in dB */
+static double meas_db(uint32_t ft, int32_t cut, int32_t res, int32_t x)
+{
+    static int16_t buf[COMB_N];
+    lad_t c;
+    int32_t st[4] = {0, 0, 0, 0}, amp = ft == 4u ? 6000 : res > 90 ? 2500 : 6000, n, N = 8192, d = COMB_D[cut];
+    uint32_t ph = 0, inc = pitch_inc((uint32_t)(272 + x * 1760 / 199)), wp = 0;
+    double si = 0, sq = 0, a;
+    memset(buf, 0, sizeof buf);
+    lad_coef(&c, cut << 8, res << 8, ft);
+    for (n = 0; n < N + 8192; n++, ph += inc) {
+        int32_t in = (int32_t)(amp * sin(ph * (6.283185307179586 / 4294967296.0))), y;
+        y = ft == 4u ? comb_tap(buf, &wp, d, res * 248, in) : lad_tap(&c, st, in, ft);
+        if (n >= 8192) {
+            si += y * sin(ph * (6.283185307179586 / 4294967296.0));
+            sq += y * cos(ph * (6.283185307179586 / 4294967296.0));
+        }
+    }
+    a = 2 * sqrt(si * si + sq * sq) / N / amp;
+    return 20 * log10(a > 1e-9 ? a : 1e-9);
+}
+
+static int32_t hz_col(double hz)                    /* the FILTER page's column of a frequency */
+{
+    return (int32_t)lround((12 * log2(hz / 440) + 69 - 17) * 16 * 199 / 1760);
+}
+
+/* the drawn FILTER curve against the real filter, per TYPE, over cutoffs and RES: worst difference between +15 and -18 dB; and the shape of each type (LP cuts highs, HP lows, BP peaks, NOTCH dips, COMB has teeth) */
+static int chk_curves(char *msg, uint32_t n)
+{
+    static const int32_t CUTS[3] = {50, 80, 110}, RESS[5] = {0, 30, 64, 85, 100};
+    static const char *const FN[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
+    double worst[5] = {0}, rms[5] = {0};
+    uint32_t ft, ci, ri, nrms[5] = {0}, shape = 0, len = 0;
+    int32_t x;
+    msg[0] = 0;
+    for (ft = 0; ft < 5u; ft++) {
+        for (ci = 0; ci < 3u; ci++)
+            for (ri = 0; ri < 5u; ri++)
+                for (x = 3; x < 200; x += 5) {
+                    int32_t cut = CUTS[ci], res = RESS[ri];
+                    double dr = fcurve_db16(ft, cut, res, x) / 16.0, m = meas_db(ft, cut, res, x), e = fabs(dr - m);
+                    if (dr > 15 || dr < -18)                  /* deep rejection is limited by 15-bit stages */
+                        continue;
+                    worst[ft] = e > worst[ft] ? e : worst[ft];
+                    rms[ft] += e * e;
+                    nrms[ft]++;
+                    if (getenv("CURVES"))
+                        printf("curve %s cut %d res %d x %d drawn %.1f real %.1f\n", FN[ft], cut, res, x, dr, m);
+                }
+        len += (uint32_t)snprintf(msg + len, n - len, "%s max %.1f rms %.1f dB; ", FN[ft], worst[ft],
+                                  sqrt(rms[ft] / (nrms[ft] ? nrms[ft] : 1)));
+    }
+    {   /* shapes: cut 80, RES 30, two octaves either side of the cutoff */
+        int32_t xc = hz_col(CUTOFF_HZ[80]), xl = xc - 40, xh = xc + 40, dcomb = COMB_D[80];
+        double c = meas_db(0, 80, 30, xc), lo, hi, pk, tr;
+        lo = meas_db(0, 80, 30, xl), hi = meas_db(0, 80, 30, xh);
+        shape += lo > -6 && hi < -25;           /* (RES 30 costs the LP's DC gain 4 dB) */                                              /* LP */
+        shape += meas_db(2, 80, 30, xl) < -25 && meas_db(2, 80, 30, xh) > -3;      /* HP */
+        shape += meas_db(1, 80, 30, xc) > meas_db(1, 80, 30, xl) + 10 && meas_db(1, 80, 30, xc) > meas_db(1, 80, 30, xh) + 10;
+        c = meas_db(3, 80, 30, xc);                                                 /* NOTCH */
+        shape += c < meas_db(3, 80, 30, xl) - 15 && c < meas_db(3, 80, 30, xh) - 15;
+        pk = meas_db(4, 80, 100, hz_col(FS * 64.0 / dcomb));                        /* COMB: teeth at k FS / D */
+        tr = meas_db(4, 80, 100, hz_col(FS * 32.0 / dcomb));
+        shape += pk > tr + 10 && meas_db(4, 80, 100, hz_col(FS * 128.0 / dcomb)) > tr + 10;
+    }
+    snprintf(msg + len, n - len, "shapes %u / 5", shape);
+    for (ft = 0; ft < 5u; ft++)
+        worst[0] = worst[ft] > worst[0] ? worst[ft] : worst[0];
+    return shape == 5u && worst[0] <= 4.5;
+}
+
 /* every filter TYPE at RES 127 with the cutoff swept over low and high notes: nothing beyond 16 bits, the tail dies out */
 static int chk_filters(char *msg, uint32_t n)
 {
     uint32_t ft, w, k;
     track_t *t = &trk[0];
     host_tracks_init();
-    for (ft = 0; ft < 4u; ft++)
+    for (ft = 0; ft < 5u; ft++)
         for (w = 0; w < 8u; w += 7u) {
             t->p[P_FTYPE] = (int16_t)ft;
             t->p[P_E0] = (int16_t)w;
@@ -505,7 +579,7 @@ static int chk_filters(char *msg, uint32_t n)
             rel_at = fpos;
             finish();
         }
-    snprintf(msg, n, "TYPE LP/BP/HP/NOTCH at RES 127: %u samples beyond 16 bits, voices free %.2f s after, tail AC %d",
+    snprintf(msg, n, "TYPE LP/BP/HP/NOTCH/COMB at RES 127: %u samples beyond 16 bits, voices free %.2f s after, tail AC %d",
              R.over, R.free_s, R.tail_peak);
     return !R.over && R.free_s >= 0 && R.tail_peak <= LIM_TAIL;
 }
@@ -795,7 +869,7 @@ int main(int argc, char **argv)
     int gupd = getenv("GOLDEN_UPDATE") != 0, cupd = getenv("BUDGET_UPDATE") != 0, verbose = getenv("VERBOSE") != 0;
     uint32_t jobs_at_once = getenv("JOBS") ? (uint32_t)atoi(getenv("JOBS")) : 8u;
     static const char *const MN[4] = {"POLY", "MONO", "LEGATO", "UNISON"};
-    static const char *const FN[4] = {"LP", "BP", "HP", "NOTCH"};
+    static const char *const FN[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
     static const char *const RN[5] = {"dry", "send40", "send127", "big_bright", "small_dark"};
     static const uint8_t MODE_S[3] = {0, 1, 3}, REV_S[2] = {1, 2}, FILT_S[3] = {0, 3, 5};
     static kv_t gold[MAXJ], cpu[MAXJ];
@@ -821,7 +895,7 @@ int main(int argc, char **argv)
         add(J_WAVE, name)->arg = (uint8_t)i;
     }
     for (i = 0; i < 3u; i++)
-        for (k0 = 0; k0 < 4u; k0++) {
+        for (k0 = 0; k0 < 5u; k0++) {
             job_t *j;
             slug(s, HOST_SOUNDS[FILT_S[i]].name, sizeof s);
             snprintf(name, sizeof name, "filter/%s/%s", s, FN[k0]);
@@ -864,6 +938,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "routing: no hanging notes")->check = chk_hang;
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
+    add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "reverb: the tail decays")->check = chk_reverb;
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     run_jobs(J, nj, jobs_at_once);
@@ -876,6 +951,14 @@ int main(int argc, char **argv)
         snprintf(name, sizeof name, "cpu/%02u_%s", pi, s);
         j = add(J_CPU, name);
         j->pi = (uint8_t)pi;
+        j->cpu_notes = 8;
+        j->own = 1;
+    }
+    for (i = 1; i < 5u; i++) {                          /* the other filter TYPEs on the first sound */
+        job_t *j;
+        snprintf(name, sizeof name, "cpu/filter/%s", FN[i]);
+        j = add(J_CPU, name);
+        j->arg = (uint8_t)i;
         j->cpu_notes = 8;
         j->own = 1;
     }

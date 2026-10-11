@@ -5,6 +5,8 @@
  * An 80s CRT on every page: black, a faint graticule, glowing phosphor lines, one phosphor colour per page. No framebuffer: the screen is drawn in two 240 x 120
  * strips (cv_oy shifts screen coordinates into the strip) and only when something it shows has changed. */
 
+#include "fcurve.c"                 /* the FILTER page's response curve */
+
 #define PX 10                       /* the picture's panel */
 #define PY 40
 #define PW 220
@@ -13,13 +15,13 @@
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[4] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], 7, 1}, {"Scan", &trk[0].p[P_E1], 127, 4}}},
-    {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 3, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
+    {B_EDIT, "FILTER", RGB(255, 176, 0), {{0, &trk[0].p[P_FTYPE], 4, 1}, {"Cutoff", &trk[0].p[P_E2], 127, 4},
                                           {"Reso", &trk[0].p[P_E3], 127, 4}}},
     {B_ENV, "ENV", RGB(60, 230, 255), {{"Attack", &trk[0].p[P_ATK], 127, 4}, {"Decay", &trk[0].p[P_DEC], 127, 4},
                                         {"Sustain", &trk[0].p[P_SUS], 127, 4}, {"Release", &trk[0].p[P_REL], 127, 4}}},
     {B_FX, "SPACE", RGB(255, 80, 200), {{"Amount", &trk[0].p[P_REV], 127, 4}, {"Size", &song.g[G_RSIZE], 127, 4}}},
 };
-static const char *const FT_NAME[4] = {"LP", "BP", "HP", "NOTCH"};
+static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
 static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
@@ -105,25 +107,14 @@ static void pic_env(void)
     }
 }
 
-/* the filter's gain at curve x (0..199), 0..60: a slope each side of the cutoff, a bump for the resonance */
-static int32_t fgain(int32_t type, int32_t x, int32_t fc, int32_t reso)
-{
-    int32_t d = x - fc, ad = d < 0 ? -d : d, g;
-    if (type == 3)
-        return 44 - (ad < 28 ? (28 - ad) * 44 / 28 : 0);
-    g = type == 0 ? (d <= 0 ? 44 : 44 - d * 44 / 70) : type == 2 ? (d >= 0 ? 44 : 44 + d * 44 / 70) :
-        44 - ad * 44 / 55;
-    if (g < 0)
-        g = 0;
-    return g + (ad < 14 ? reso * 16 / 127 * (14 - ad) / 14 : 0);
-}
-
+/* the true response (fcurve.c) from +18 to -48 dB, 22 Hz .. 12.5 kHz on a log axis */
 static void pic_filter(void)
 {
-    int32_t x, base = PY + PH - 12, fc = 20 + trk[0].p[P_E2] * 160 / 127;
+    int32_t x, base = PY + PH - 12, y;
     for (x = 0; x < 200; x++) {
+        y = (fcurve_db16(trk[0].p[P_FTYPE], trk[0].p[P_E2], trk[0].p[P_E3], x) + 48 * 16) * 100 / (66 * 16);
         pt[x][0] = (int16_t)(PX + 10 + x);
-        pt[x][1] = (int16_t)(base - fgain(trk[0].p[P_FTYPE] & 3, x, fc, trk[0].p[P_E3]));
+        pt[x][1] = (int16_t)(base - clamp(y, 0, 100));
     }
     glow_pts(200, PG[1].bg);
 }
@@ -163,7 +154,7 @@ static void banner(void)
 static void scene(void)
 {
     uint16_t bg = PG[ui_page].bg, track = ux_mix(0, bg, 20);
-    int32_t n = 0, i, gap = 6, bw, ty = trk[0].p[P_FTYPE] & 3;
+    int32_t n = 0, i, gap = 6, bw, ty = clamp(trk[0].p[P_FTYPE], 0, 4);
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[trk[0].p[P_E0] & 7];
     while (n < 4 && PG[ui_page].k[n].v)
         n++;

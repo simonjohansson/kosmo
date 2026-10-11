@@ -28,7 +28,7 @@ enum {                          /* per-part parameters */
     P_REV,                                     /* ROOM reverb send */
     P_VOICE, P_GLIDE, P_PAN, P_MUTE,
     P_GLMODE, P_PRIO, P_ALLOC, P_DETUNE,
-    P_FTYPE,                                   /* filter TYPE: LP / BP / HP / NOTCH (eng_wave.c) */
+    P_FTYPE,                                   /* filter TYPE: LP / BP / HP / NOTCH / COMB (eng_wave.c) */
     P_E0, P_E1, P_E2, P_E3, P_E4, P_E5, P_E6, P_E7,
     P_COUNT
 };

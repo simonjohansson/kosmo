@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* WAVE: one wavetable oscillator through a state-variable filter (LP / BP / HP / NOTCH, P_FTYPE).
+/* WAVE: one wavetable oscillator through a Moog ladder filter (LP / BP / HP / NOTCH) or a comb (P_FTYPE).
  * WAVE picks one of 8 tables, SCAN moves through its 8 frames (simple to bright), CUT and RES set the filter.
  * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). SCAN, CUT and RES are smoothed once per block. */
 #include "kosmo_waves.h"
@@ -35,39 +35,68 @@ int16_t wave_peek(int table, int scan, int i)
     return (int16_t)wave_read(a, b, w, (uint32_t)(i & 255) << 24);
 }
 
+static int16_t comb_buf[NVOICE][COMB_N];             /* one comb line per voice; s[7] says it is cleared */
+
+/* slots: s[0] s[1] s[4] s[5] ladder stages (kept on retrigger), s[2] s[3] s[6] smoothed CUT RES SCAN, s[7] comb valid */
 static void wave_note_on(track_t *t, voice_t *v)
 {
-    v->s[0] = v->s[1] = 0;                            /* filter */
-    v->s[2] = t->p[P_E2] << 8;                        /* smoothed CUT, RES, SCAN (Q8) */
+    v->s[0] = v->s[1] = v->s[4] = v->s[5] = v->s[7] = 0;
+    v->s[2] = t->p[P_E2] << 8;
     v->s[3] = t->p[P_E3] << 8;
-    v->s[4] = t->p[P_E1] << 8;
+    v->s[6] = t->p[P_E1] << 8;
 }
 
 static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
     const int16_t *p = t->p, *fa, *fb;
-    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[4], w, ic1 = v->s[0], ic2 = v->s[1];
-    uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE] & 3u, i;
-    tsvf_t flt;
-    int32_t k;
+    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s;
+    uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE], i;
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
     ss += ((p[P_E1] << 8) - ss) >> 2;
     wave_frames(p[P_E0], ss, &fa, &fb, &w);
-    k = 8192 - (sr >> 8) * 7600 / 127;                /* tsvf_coef's damping, Q12 */
-    tsvf_coef_k(&flt, sc + m->cutoff, k);
-    for (i = 0; i < n; i++) {
-        int32_t s = wave_read(fa, fb, w, ph);
-        ph += inc;
-        s = soft_knee(tsvf_tap(&flt, k, s >> 1, &ic1, &ic2, ft), 16000) << 1;
-        out[i] += voice_amp(s, m, i) << 1;
+    if (ft > 4u)
+        ft = 4;
+    if (ft == 4u) {                                   /* COMB: CUT the delay, RES the feedback */
+        int16_t *buf = comb_buf[v - t->v];
+        int32_t c = clamp(sc + m->cutoff, 0, 127 << 8), d = COMB_D[c >> 8], g = (sr >> 8) * 248;
+        if (c < 127 << 8)
+            d += ((COMB_D[(c >> 8) + 1] - d) * (c & 255)) >> 8;
+        if (!v->s[7]) {
+            memset(buf, 0, sizeof comb_buf[0]);
+            v->s[7] = 1;
+        }
+        for (i = 0; i < n; i++) {
+            s = wave_read(fa, fb, w, ph) >> 1;
+            ph += inc;
+            s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s), 16000) << 1;
+            out[i] += voice_amp(s, m, i) << 1;
+        }
+    } else {
+        lad_t flt;
+        lad_coef(&flt, sc + m->cutoff, sr, ft);
+#define LAD_LOOP(FT)                                                                           \
+    for (i = 0; i < n; i++) {                                                                  \
+        s = wave_read(fa, fb, w, ph);                                                          \
+        ph += inc;                                                                             \
+        s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000) << 1;                              \
+        out[i] += voice_amp(s, m, i) << 1;                                                     \
+    }
+        switch (ft) {                                 /* one loop per type: its mix folds into the code */
+        case 0: LAD_LOOP(0) break;
+        case 1: LAD_LOOP(1) break;
+        case 2: LAD_LOOP(2) break;
+        default: LAD_LOOP(3) break;
+        }
     }
     v->ph[0] = ph;
-    v->s[0] = ic1;
-    v->s[1] = ic2;
+    v->s[0] = st[0];
+    v->s[1] = st[1];
+    v->s[4] = st[2];
+    v->s[5] = st[3];
     v->s[2] = sc;
     v->s[3] = sr;
-    v->s[4] = ss;
+    v->s[6] = ss;
 }
 
 static const engine_t ENG_WAVE = {
@@ -80,5 +109,5 @@ static const engine_t ENG_WAVE = {
     },
     .note_on = wave_note_on,
     .render = wave_render,
-    .keep = 0x03,                /* the filter */
+    .keep = 0xB3,                /* the filter: s[0] s[1] s[4] s[5], the comb flag s[7] */
 };

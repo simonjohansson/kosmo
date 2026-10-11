@@ -56,8 +56,29 @@ def main(path):
     # filter cutoff 30 Hz .. 16 kHz
     fc = [30.0 * ((16000 / 30) ** (v / 127)) for v in range(128)]
     L += arr("CUTOFF_HZ", "uint16_t", [int(round(f)) for f in fc])
-    # trapezoidal (Simper) SVF: g = tan(pi fc / FS), Q12; stable at any cutoff/resonance
-    L += arr("SVF_G", "uint16_t", [int(4096 * math.tan(math.pi * min(f, 0.45 * FS) / FS)) for f in fc])
+    # TPT one-pole g = tan(pi fc / FS), Q12 (the ladder's stages): stable at any cutoff
+    L += arr("TAN_G", "uint16_t", [int(4096 * math.tan(math.pi * min(f, 0.45 * FS) / FS)) for f in fc])
+    # comb delay (samples, Q6) for CUT 0..127: 400 (110 Hz) .. 8 (5.5 kHz), exponential
+    L += arr("COMB_D", "uint16_t", [int(round(64 * 400 * (8 / 400) ** (v / 127))) for v in range(128)])
+    # FILTER page axis: column x (0..199) is pitch 272 + x * 1760 / 199 in 1/16 semitone (22 Hz .. 12.5 kHz);
+    # LAD_X[x] = log2(tan(pi f / FS)) in Q8, the analog frequency of the bilinear ladder
+    px = [272 + x * 1760 // 199 for x in range(200)]
+    L += arr("LAD_X", "int16_t", [int(round(256 * math.log2(math.tan(math.pi * 440 * 2 ** ((p / 16 - 69) / 12) / FS))))
+                                  for p in px])
+    # ladder magnitude (uint8: 4 * (dB + 48), 0.25 dB steps from -48 to +15.75) of LP BP HP NOTCH: 16 RES steps (RES = j * 127 / 15) x 128 points, 1/16 octave
+    # apart from -4 to +4 octaves around the cutoff. Analog 4-pole ladder with resonance k = 126 RES / 4096
+    # (dsp.c lad_coef) in the pre-warped frequency, so the same table serves every cutoff; the LP's input gain 1 + k / 4.
+    MIX = [(0, 0, 0, 0, 1), (0, 0, 4, -8, 4), (1, -4, 6, -4, 1), (1, 0, -4, 8, -4)]
+    lad = []
+    for m in MIX:
+        for j in range(16):
+            k = 126 * j * 127 / 15 / 4096
+            for t in range(128):
+                P = 1 / (1 + 1j * 2 ** ((t - 64) / 16))
+                u = (1 + k / 4 if m == MIX[0] else 1) / (1 + k * P ** 4)
+                h = sum(c * P ** i * u for i, c in enumerate(m))
+                lad.append(max(0, min(255, int(round(4 * (20 * math.log10(max(abs(h), 1e-9)) + 48))))))
+    L += arr("LAD_DB", "uint8_t", lad, 16)
     # level: 0 = off, else dB = (v - 112) / 2  (112 = 0 dB, 127 = +7.5 dB)
     db = [None] + [(v - 112) / 2 for v in range(1, 128)]
     L += arr("LEVEL_Q12", "uint16_t", [0] + [int(round(4096 * 10 ** (d / 20))) for d in db[1:]])
