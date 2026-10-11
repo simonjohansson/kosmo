@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* The kids' UI: four pages, one function button each (its LED is lit while the page shows):
+/* The kids' UI: five pages, one function button each (SETTINGS on GLO: K1 = ECHO PING-PONG / STEREO) (its LED is lit while the page shows):
  *   HOME WAVE (wave, scan, fat, detune) - EDIT FILTER (type, cutoff, reso) - ENV ADSR - FX ECHO (time, repeats, character,
  *   amount), pressed again SPACE (amount, size), again ECHO: the order of the signal chain; the header corner says 1/2 or 2/2
  * K1..K4 turn the bars at the bottom. OCT-/OCT+ shift the keys (both together: back to the middle).
@@ -15,9 +15,11 @@
 #define PH 122
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
-#define NPG 5                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE */
+#define NPG 6                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE; 5: SETTINGS (GLO) */
 #define PG_SPACE 3
 #define PG_ECHO 4
+#define PG_SET 5
+static int16_t set_ec;                      /* SETTINGS K1: ECHO STEREO, 0 PING-PONG / 1 STEREO (kept in settings.lowcut as ECHO_STEREO_TAG) */
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[NPG] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], NWAVES - 1, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
                                           {"Fat", &trk[0].p[P_E4], 4, 1}, {"Detune", &trk[0].p[P_DETUNE], 127, 4}}},
@@ -29,7 +31,9 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
                                     {0, &song.g[G_RPROG], 5, 1}, {"Tone", &song.g[G_RTONE], 127, 4}}},
     {B_FX, "ECHO", RGB(255, 96, 40), {{"Time", &song.g[G_ETIME], 127, 4}, {"Repeats", &song.g[G_EFB], 127, 4},
                                       {0, &song.g[G_ECHAR], 4, 1}, {"Amount", &song.g[G_EAMT], 127, 4}}},
+    {B_GLO, "SETTINGS", RGB(170, 120, 255), {{0, &set_ec, 1, 1}}},
 };
+static const char *const SET_EC_NAME[2] = {"Ping-pong", "Stereo"};
 static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
 static const char *const SP_NAME[6] = {"Bedroom", "Castle", "Plate", "Cloud", "Gated", "Wobble"};   /* the bar is 52 px wide */
 static const char *const SP_FULL[6] = {"BEDROOM", "CASTLE", "METAL PLATE", "CLOUD", "GATED", "WOBBLE"};
@@ -246,6 +250,27 @@ static void pic_echo(void)
     }
 }
 
+/* SETTINGS: ECHO STEREO. PING-PONG: dots bouncing between the L and R walls; STEREO: dots staying on their own side */
+static void pic_settings(void)
+{
+    int32_t i, xl = PX + 36, xr = PX + PW - 36, y0 = PY + 28, dy = 12, st = set_ec;
+    uint16_t c = PG[PG_SET].bg;
+    cv_text(PX + 6, PY + 4, &AF_S, "ECHO", c);
+    cv_text(xl - text_w(&AF_M, "L") / 2, PY + PH - 20, &AF_M, "L", c);
+    cv_text(xr - text_w(&AF_M, "R") / 2, PY + PH - 20, &AF_M, "R", c);
+    for (i = 0; i < 6; i++) {
+        int32_t m = 100 - i * 14, y = y0 + i * dy, x = i & 1 ? xr : xl;
+        if (st) {                                   /* two columns, each dot keeps its side */
+            disc(xl, y, 5, 0, ux_mix(0, c, m));
+            disc(xr, y, 5, 0, ux_mix(0, c, m));
+            continue;
+        }
+        if (i < 5)
+            cv_line_t(x, y, i & 1 ? xl : xr, y + dy, ux_mix(0, c, 25), 2);
+        disc(x, y, 5, 0, ux_mix(0, c, m));
+    }
+}
+
 static void banner(void)
 {
     const char *n = PRESETS[ui_preset].name;
@@ -274,7 +299,7 @@ static void scene(void)
     }
     if (ui_hit(R_PIC)) {
         graticule(PX, PY, PW, PH, bg);
-        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : pic_space)();
+        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : ui_page == PG_SET ? pic_settings : pic_space)();
     }
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
@@ -282,7 +307,7 @@ static void scene(void)
         if (!ui_hit(bar_rc(i)))
             continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
-        const char *name = k->name ? k->name : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
+        const char *name = k->name ? k->name : ui_page == PG_SET ? SET_EC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
@@ -334,6 +359,8 @@ static void ui_input(void)
     for (i = 0; i < 4u; i++)
         if (pressed & (1u << panel.btn[PG[i].btn]))
             ui_page = (uint8_t)(i == PG_SPACE ? (ui_page == PG_ECHO ? PG_SPACE : PG_ECHO) : i);   /* FX: ECHO, SPACE, ECHO ... */
+    if (pressed & (1u << panel.btn[B_GLO]))
+        ui_page = PG_SET;
     pst = panel_enc(EN_PRESET);
     if (pst) {                                  /* PRESETS: step with wrap-around, show the name for 1.5 s */
         ui_preset = (uint8_t)((ui_preset + pst % (int32_t)NPRESETS + (int32_t)NPRESETS) % (int32_t)NPRESETS);
@@ -342,6 +369,7 @@ static void ui_input(void)
     }
     if (ui_banner && (int32_t)(fm1_ms - ui_banner) >= 0)
         ui_banner = 0;
+    set_ec = settings.lowcut == ECHO_STEREO_TAG;
     for (i = 0; i < 4u; i++) {                  /* knobs K1..K4 (a knob the page does not use is only drained) */
         int32_t s = panel_enc(EN_K1 + i), v;
         const kn_t *k = &PG[ui_page].k[i];
@@ -352,9 +380,15 @@ static void ui_input(void)
         v = *k->v + s * k->step;
         *k->v = (int16_t)(v < 0 ? 0 : v > k->max ? k->max : v);
     }
+    if ((settings.lowcut == ECHO_STEREO_TAG) != (set_ec != 0)) {   /* SETTINGS K1 turned: keep it and save */
+        settings.lowcut = set_ec ? ECHO_STEREO_TAG : 0u;
+        settings_save();
+    }
+    ec_stereo = set_ec != 0;
     if (!fm1_led_anim_on() && ui_led != (int8_t)ui_page) {     /* the page's button glows, the others do not */
         for (i = 0; i < 4u; i++)
             fm1_led_key(panel.btn[PG[i].btn], PG[i].btn == PG[ui_page].btn);
+        fm1_led_key(panel.btn[B_GLO], ui_page == PG_SET);
         ui_led = (int8_t)ui_page;
     }
     for (i = 0; i < NVOICE; i++)

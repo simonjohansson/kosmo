@@ -71,6 +71,8 @@ static int32_t panel_enc(uint32_t role)
 #define SETTINGS_MAGIC_OLD 0x53455433u          /* "SET3" */
 struct { uint32_t magic, palette, lowcut, zoom; } settings __attribute__((section(".noinit")));
 
+/* ECHO STEREO (SETTINGS page, ui.c): saved in the record's spare lowcut field as ECHO_STEREO_TAG; anything else there is PING-PONG */
+#define ECHO_STEREO_TAG 0x45434801u            /* "ECH" 1 */
 static void settings_save(void);              /* settings_persist.c: flash copy (KOSMO_FLASH) */
 
 /* HOLD (menu): how long a button is held before its layer opens (ui_input.c). Saved in the settings record's

@@ -3,7 +3,7 @@
  * dry signal stays) and to the reverb send. At AMOUNT 0 it does nothing at all: the output is bit for bit as without it.
  *
  * Memory: two lines (A feeds B, B feeds back to A: the echoes ping-pong L R L R), 16K samples each at a ~22 kHz delay
- * clock (0.74 s), 12 bits packed 3 bytes per 2 samples = 48 KB. The input is L into line A and R into line B, halved to the delay clock by
+ * clock (0.74 s), 12 bits packed 3 bytes per 2 samples = 48 KB. The input (ec_stereo 0: the mono sum into line A only, the ping-pong; 1: L into A and R into B), halved to the delay clock by
  * a two-sample average; the taps are doubled back to 44.1 kHz by linear interpolation.
  * Write: TPDF dither (+-1 LSB), the code is clamped to 12 bits; CRUNCH and TOY first run the sample through a sqrt curve
  * (ec_enc LUT) and square it on the way out (a compander: fine steps when quiet, coarse when loud: the grain).
@@ -18,6 +18,7 @@
 static uint8_t ec_mem[2][EC_N / 2u * 3u] __attribute__((section(".pool")));
 static uint16_t ec_enc[1025] __attribute__((section(".pool")));   /* compander: |x| >> 5 -> sqrt code, Q4 of a 12-bit code */
 static int32_t ec_wl[CTL], ec_wr[CTL];
+static uint8_t ec_stereo;                       /* 0 PING-PONG (the sum into line A), 1 STEREO (L into A, R into B); ui.c syncs it from the settings */
 static struct {
     uint32_t wr, rng, ph, rph;
     int32_t dc;                         /* the delay, Q16 samples of the delay clock */
@@ -157,7 +158,14 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
     if (!ec.on)
         ec_start();
     for (i = 0; i < (int32_t)n; i += 2) {
-        int32_t ml = (mix_l[i] + mix_l[i + 1]) >> 1, mr = (mix_r[i] + mix_r[i + 1]) >> 1, ya, yb, ca, cb, step = (tdc - ec.dc) >> 8;
+        int32_t ml, mr, ya, yb, ca, cb, step = (tdc - ec.dc) >> 8;
+        if (ec_stereo) {
+            ml = (mix_l[i] + mix_l[i + 1]) >> 1;
+            mr = (mix_r[i] + mix_r[i + 1]) >> 1;
+        } else {
+            ml = (mix_l[i] + mix_l[i + 1] + mix_r[i] + mix_r[i + 1]) >> 2;
+            mr = 0;
+        }
         if (ch == EC_BACK) {
             uint32_t ua = ec.ph, ub = (ua + (1u << 19)) & 0xFFFFF;
             uint32_t da = (((ua >> 7) * w4 >> 13) + 32u) << 12, db = (((ub >> 7) * w4 >> 13) + 32u) << 12;
@@ -182,7 +190,7 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
             ca = ec.hold_l;
             cb = ec.hold_r;
         }
-        ca = ec_quant(clamp(ml + ca, -32767, 32767), comp, (uint32_t)((ml | mr) != 0));   /* L feeds line A, R line B */
+        ca = ec_quant(clamp(ml + ca, -32767, 32767), comp, (uint32_t)((ml | mr) != 0));   /* PING-PONG: the sum into A only; STEREO: R into B */
         cb = ec_quant(clamp(mr + cb, -32767, 32767), comp, (uint32_t)((ml | mr) != 0));
         ec_put(ec_mem[0], ec.wr, ca);
         ec_put(ec_mem[1], ec.wr, cb);
@@ -204,9 +212,10 @@ static __attribute__((noinline)) void echo_block(uint32_t n)
         wr = mulq15(ec_wr[i], gw);
         mix_l[i] += wl;
         mix_r[i] += wr;
-        if (r) {
-            send_l[i] += mulq15(clamp(wl, -xmax, xmax), r);
-            send_r[i] += mulq15(clamp(wr, -xmax, xmax), r);
+        if (r) {                                            /* PING-PONG: the pair summed, as before #26 */
+            int32_t sl = ec_stereo ? wl : (wl + wr) >> 1, sr = ec_stereo ? wr : sl;
+            send_l[i] += mulq15(clamp(sl, -xmax, xmax), r);
+            send_r[i] += mulq15(clamp(sr, -xmax, xmax), r);
         }
     }
 }

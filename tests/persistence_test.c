@@ -108,6 +108,15 @@ int main(void)
         bad += check("persist_boot reads the saved record back", persist_saved.palette == palette_to_stored(1) &&
                       settings.palette == 1u && persist_saved.panel.magic == PANEL_MAGIC);
     }
+    {   /* ECHO STEREO (SETTINGS page): saved in the spare lowcut field, record size unchanged, back after power-on */
+        settings.lowcut = ECHO_STEREO_TAG;
+        settings_save();
+        persist_saved.lowcut = 0;
+        memset(&settings, 0, sizeof settings);
+        persist_boot();
+        bad += check("ECHO STEREO survives a save and a power-on load", st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p &&
+                      p.lowcut == ECHO_STEREO_TAG && settings.lowcut == ECHO_STEREO_TAG);
+    }
     {   /* no flash part: RAM only, nothing written */
         reset();
         flash_ok = 0;

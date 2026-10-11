@@ -1147,11 +1147,32 @@ static int chk_stereo_voices(char *msg, uint32_t n)
 
 /* #26: a hard-left impulse echoes left, right, left (the right line starts empty) */
 static int32_t in_zero(uint32_t p) { (void)p; return 0; }
+/* #26: ECHO mode. PING-PONG (default): a centred impulse bounces L, R, L; STEREO: it stays centred (L == R) */
+static int chk_echo_mode(char *msg, uint32_t n)
+{
+    double e[2][2], hf;
+    int32_t pk, T = 11800, c = 5 + T, m, same[2];
+    for (m = 0; m < 2; m++) {
+        host_tracks_init();
+        ec_stereo = (uint8_t)m;
+        song.g[G_ETIME] = 40;
+        song.g[G_EFB] = 70;
+        song.g[G_EAMT] = 127;
+        echo_run(ECN, in_pulse);
+        ec_win(ec_out[0], c, &e[m][0], &hf, &pk);
+        ec_win(ec_out[1], c, &e[m][1], &hf, &pk);
+        same[m] = !memcmp(ec_out[0], ec_out[1], sizeof ec_out[0]);
+    }
+    ec_stereo = 0;
+    snprintf(msg, n, "ECHO mode, centred impulse at T: PING-PONG L %.0f R %.0f, STEREO L %.0f R %.0f (L == R: %d)", e[0][0], e[0][1], e[1][0], e[1][1], same[1]);
+    return e[0][0] > 100 * e[0][1] && !same[0] && same[1] && e[1][0] > 1e5;
+}
 static int chk_stereo_echo(char *msg, uint32_t n)
 {
     double e[4], hf;
     int32_t pk, T = 11800, c = 5 + T, i, b;
     host_tracks_init();
+    ec_stereo = 1;
     song.g[G_ETIME] = 40;
     song.g[G_EFB] = 70;
     song.g[G_EAMT] = 127;
@@ -1169,6 +1190,7 @@ static int chk_stereo_echo(char *msg, uint32_t n)
     ec_win(ec_out[1], c, &e[1], &hf, &pk);
     ec_win(ec_out[1], c + T, &e[2], &hf, &pk);
     ec_win(ec_out[0], c + 2 * T, &e[3], &hf, &pk);
+    ec_stereo = 0;
     snprintf(msg, n, "stereo ECHO, hard-left impulse: energy L %.0f / R %.0f at T, R %.0f at 2T, L %.0f at 3T", e[0], e[1], e[2], e[3]);
     return e[0] > 100 * e[1] && e[2] > 100 * e[1] && e[3] > 1e5;
 }
@@ -1654,6 +1676,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "presets: load, sound, all different")->check = chk_presets;
     add(J_CHECK, "echo: off is silent and untouched, repeats decay and darken")->check = chk_echo_decay;
     add(J_CHECK, "stereo: FAT copies spread, L+R level kept")->check = chk_stereo_voices;
+    add(J_CHECK, "echo: PING-PONG bounces a centred impulse, STEREO keeps it centred")->check = chk_echo_mode;
     add(J_CHECK, "stereo: ECHO bounces a hard-left impulse L R L")->check = chk_stereo_echo;
     add(J_CHECK, "stereo: SPACE reverberates a hard-left input from the left")->check = chk_stereo_space;
     add(J_CHECK, "echo: REPEATS 127 stays bounded")->check = chk_echo_bound;

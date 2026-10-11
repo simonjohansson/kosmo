@@ -62,6 +62,11 @@ def script():
     ev.append((t, NOTE, 1))
     steps.append(("08_note", t + 600 * MS))
     ev.append((t + 700 * MS, NOTE, 0))
+    t += 1500 * MS
+    press("f6")                                             # GLO: the SETTINGS page (ECHO PING-PONG), then K1 to STEREO
+    snap("09_settings_page")
+    turn(KNOB[0], 1)
+    snap("09_settings_knobs")
     return ev, steps
 
 
@@ -116,7 +121,8 @@ def main():
             p = OUT / f"{name}_diff.png"
             diff.save(p)
             bad.append(f"{name}: {n} pixels differ by more than {TOL}: {p}")
-    pre, post = log[-2], log[-1]
+    names = [n for n, _ in steps]
+    pre, post = log[names.index("07_before_note")], log[names.index("08_note")]
     if not update and not (post["audio_nonzero_words"] > pre["audio_nonzero_words"] and post["audio_completions"] > pre["audio_completions"]):
         bad.append(f"audio counters did not increase after the note: {pre['audio_nonzero_words']} -> {post['audio_nonzero_words']}")
     print("\n".join(("FAIL: " + b) for b in bad) or ("UPDATED" if update else "PASS") + f" ({len(steps)} snapshots)")
