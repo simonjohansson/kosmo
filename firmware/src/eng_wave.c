@@ -100,7 +100,6 @@ int16_t wave_peek(int table, int scan, int i)
 }
 
 static int32_t xbuf[HALF_FRAMES];                  /* the block of a level change: old level cross-faded to the new */
-static int16_t comb_buf[NVOICE][COMB_N];             /* one comb line per voice; s[7] says it is cleared */
 
 /* slots: s[0] s[1] s[4] s[5] ladder stages (kept on retrigger), s[2] s[3] smoothed CUT RES (Q8), s[6] SCAN (Q16), s[7] comb valid */
 static void wave_note_on(track_t *t, voice_t *v)
@@ -117,8 +116,8 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     uint32_t _tw = fm1_ticks();
 #endif
     const int16_t *p = t->p, *fa, *fb;
-    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s, bq, bstep;
-    uint32_t ph = v->ph[0], inc = m->inc, ft = (uint32_t)p[P_FTYPE], i, lv = wave_level(inc), pl = v->ph[2], xf = 0;
+    int32_t sc = v->s[2], sr = v->s[3], ss = v->s[6], w, st[4] = {v->s[0], v->s[1], v->s[4], v->s[5]}, s;
+    uint32_t ph = v->ph[0], inc = m->inc, i, lv = wave_level(inc), pl = v->ph[2], xf = 0;
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
     ss += ((p[P_E1] << 16) - ss) >> 6;                /* a one-pole of 64 blocks (tau 43 ms): a detent is a sweep */
@@ -137,47 +136,8 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         }
         xf = 1;
     }
-    bq = (m->amp0 * VOICE_FS) >> 7;                   /* the amplitude ramp times VOICE_FS, Q8 */
-    bstep = (((m->amp1 * VOICE_FS) >> 7) - bq) >> CTL_LOG2;
-    if (ft > 4u)
-        ft = 4;
-    if (ft == 4u) {                                   /* COMB: CUT the delay, RES the feedback */
-        int16_t *buf = comb_buf[v - t->v];
-        int32_t c = clamp(sc + m->cutoff, 0, 127 << 8), d = COMB_D[c >> 8], g = (sr >> 8) * 248;
-        if (c < 127 << 8)
-            d += ((COMB_D[(c >> 8) + 1] - d) * (c & 255)) >> 8;
-        if (!v->s[7]) {
-            memset(buf, 0, sizeof comb_buf[0]);
-            v->s[7] = 1;
-        }
-        for (i = 0; i < n; i++) {
-            s = (xf ? xbuf[i] : blend_read(tab, ph)) >> 1;
-            ph += inc;
-            s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s), 16000);
-            out[i] += (s * (bq >> 8)) >> 13;
-            bq += bstep;
-        }
-    } else {
-        lad_t flt;
-        lad_coef(&flt, sc + m->cutoff, sr, ft);
-#if KOSMO_PERF
-        pfx_s[5] += fm1_ticks() - _tw; pfx_n[5]++; _tw = fm1_ticks();
-#endif
-#define LAD_LOOP(FT)                                                                           \
-    for (i = 0; i < n; i++) {                                                                  \
-        s = xf ? xbuf[i] : blend_read(tab, ph);                                            \
-        ph += inc;                                                                             \
-        s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000);                                   \
-        out[i] += (s * (bq >> 8)) >> 13;                                                       \
-        bq += bstep;                                                                           \
-    }
-        switch (ft) {                                 /* one loop per type: its mix folds into the code */
-        case 0: LAD_LOOP(0) break;
-        case 1: LAD_LOOP(1) break;
-        case 2: LAD_LOOP(2) break;
-        default: LAD_LOOP(3) break;
-        }
-    }
+#define WAVE_GET s = xf ? xbuf[i] : blend_read(tab, ph); ph += inc;
+    FILTER_BLOCK(WAVE_GET);
 #if KOSMO_PERF
     pfx_s[6] += fm1_ticks() - _tw; pfx_n[6]++;
 #endif

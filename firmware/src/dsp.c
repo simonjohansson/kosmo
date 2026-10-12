@@ -145,6 +145,56 @@ static inline int32_t comb_tap(int16_t *buf, uint32_t *wp, int32_t d, int32_t g,
     return y;
 }
 
+/* The filter stage both engines end in (WAVE, SEM): the oscillator is GET, statements that leave the next raw sample (+-32768) in s,
+ * so the filter code is written once and a type's loop folds the oscillator in. The engine declares t, v, out, n, m, i, s, sc, sr
+ * (smoothed CUT, RES: Q8, plus m->cutoff), st[4] (the ladder stages) and, with KOSMO_PERF, _tw. The comb line is per voice. */
+static int16_t comb_buf[NVOICE][COMB_N];             /* one comb line per voice; s[7] says it is cleared */
+#if KOSMO_PERF
+#define FLT_MARK() do { pfx_s[5] += fm1_ticks() - _tw; pfx_n[5]++; _tw = fm1_ticks(); } while (0)
+#else
+#define FLT_MARK() ((void)0)
+#endif
+#define FLT_LOOP(GET, FT)                                                                          \
+    for (i = 0; i < n; i++) {                                                                      \
+        GET                                                                                        \
+        s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000);                                       \
+        out[i] += (s * (bq >> 8)) >> 13;                                                           \
+        bq += bstep;                                                                               \
+    }
+#define FILTER_BLOCK(GET)                                                                          \
+    do {                                                                                           \
+        uint32_t ft = (uint32_t)t->p[P_FTYPE];                                                     \
+        int32_t bq = (m->amp0 * VOICE_FS) >> 7, bstep = (((m->amp1 * VOICE_FS) >> 7) - bq) >> CTL_LOG2; \
+        if (ft > 4u)                                                                               \
+            ft = 4;                                                                                \
+        if (ft == 4u) {                                   /* COMB: CUT the delay, RES the feedback */ \
+            int16_t *buf = comb_buf[v - t->v];                                                     \
+            int32_t c = clamp(sc + m->cutoff, 0, 127 << 8), d = COMB_D[c >> 8], g = (sr >> 8) * 248; \
+            if (c < 127 << 8)                                                                      \
+                d += ((COMB_D[(c >> 8) + 1] - d) * (c & 255)) >> 8;                                \
+            if (!v->s[7]) {                                                                        \
+                memset(buf, 0, sizeof comb_buf[0]);                                                \
+                v->s[7] = 1;                                                                       \
+            }                                                                                      \
+            for (i = 0; i < n; i++) {                                                              \
+                GET                                                                                \
+                s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s >> 1), 16000);                      \
+                out[i] += (s * (bq >> 8)) >> 13;                                                   \
+                bq += bstep;                                                                       \
+            }                                                                                      \
+        } else {                                                                                   \
+            lad_t flt;                                                                             \
+            lad_coef(&flt, sc + m->cutoff, sr, ft);                                                \
+            FLT_MARK();                                                                            \
+            switch (ft) {                                 /* one loop per type: its mix folds into the code */ \
+            case 0: FLT_LOOP(GET, 0) break;                                                        \
+            case 1: FLT_LOOP(GET, 1) break;                                                        \
+            case 2: FLT_LOOP(GET, 2) break;                                                        \
+            default: FLT_LOOP(GET, 3) break;                                                       \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+
 /* amplitude ramp over the block. Blocks are always CTL long, so x / CTL is a
  * shift (rounded towards zero, as a division); the compiler at -Os keeps
  * even constant divisions as a hardware divide, once per sample and voice */
