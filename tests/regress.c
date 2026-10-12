@@ -772,6 +772,7 @@ static void sem_run(const int16_t *ps, uint32_t inc1, int32_t pitch16, double *x
     uint32_t i, j;
     memset(&v, 0, sizeof v);
     memcpy(&t->p[P_S0], ps, 8 * sizeof *ps);
+    v.ph[1] = sem_pw_start(t->p);
     m.inc = inc1;
     m.pitch16 = pitch16;
     sem_osc(t->p, &v, CTL, &m);
@@ -812,6 +813,7 @@ static int chk_sem_pitch(char *msg, uint32_t n)
                 ps[4] = TU[b];
                 ps[5] = FI[c];
                 memcpy(&t->p[P_S0], ps, sizeof ps);
+                v.ph[1] = sem_pw_start(t->p);
                 m.pitch16 = NT[a] * 16;
                 m.inc = pitch_inc((uint32_t)m.pitch16);
                 sem_osc(t->p, &v, 1, &m);
@@ -851,6 +853,44 @@ static int chk_sem_pw(char *msg, uint32_t n)
     }
     snprintf(msg + len, n - len, "limit 0.5 points off");
     return worst <= 0.005;
+}
+
+/* one PW detent (63 -> 66, the knob's step of 3) on a held pulse: the levels glide, so away from the edges no sample steps by more than
+ * 0.008 (an unsmoothed step moves both levels at once, 0.021) */
+static int chk_sem_pw_step(char *msg, uint32_t n)
+{
+    static double x[CTL * 120];
+    int16_t ps[8];
+    voice_t v;
+    vmod_t m = {0};
+    uint32_t i, b, L = CTL * 120u;
+    double worst = 0;
+    memcpy(ps, SEM_DEF, sizeof ps);
+    ps[0] = 1;
+    ps[7] = 0;
+    host_tracks_init();
+    memcpy(&trk[0].p[P_S0], ps, sizeof ps);
+    memset(&v, 0, sizeof v);
+    v.ph[1] = sem_pw_start(trk[0].p);
+    m.inc = pitch_inc(24 * 16);
+    m.pitch16 = 24 * 16;
+    for (b = 0; b < 120u; b++) {
+        if (b == 40u)
+            trk[0].p[P_S1] = 66;
+        sem_osc(trk[0].p, &v, CTL, &m);
+        for (i = 0; i < CTL; i++)
+            x[b * CTL + i] = xbuf[i] / 32768.0;
+    }
+    for (i = 8; i + 8 < L; i++) {
+        uint32_t k;
+        int edge = 0;
+        for (k = i - 7; k <= i + 7u && !edge; k++)
+            edge = fabs(x[k] - x[k - 1]) > 0.05;
+        if (!edge && i > 40u * CTL)
+            worst = fmax(worst, fabs(x[i] - x[i - 1]));
+    }
+    snprintf(msg, n, "PW 63 -> 66 on a held pulse: largest step away from the edges %.4f (limit 0.008)", worst);
+    return worst <= 0.008;
 }
 
 /* aliasing of the oscillators alone at C5 C6 C7, as chk_alias for WAVE (energy at non-harmonic bins; WAVE's own limit: under -30 dB):
@@ -2205,6 +2245,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: no click at a mip level switch")->check = chk_mip_switch;
     add(J_CHECK, "sem: VCO1, VCO2 pitch, TUNE and FINE")->check = chk_sem_pitch;
     add(J_CHECK, "sem: PW sets the duty")->check = chk_sem_pw;
+    add(J_CHECK, "sem: PW detent without a step")->check = chk_sem_pw_step;
     add(J_CHECK, "sem: band-limited, aliasing at C5 C6 C7")->check = chk_sem_alias;
     add(J_CHECK, "sem: SYNC locks VCO2 to VCO1")->check = chk_sem_sync;
     add(J_CHECK, "sem: ALGORITHM switch on held notes, parameters kept")->check = chk_sem_switch;

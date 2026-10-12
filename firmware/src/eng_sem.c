@@ -10,6 +10,15 @@ static const char *const SEM_WAVE_NAMES[2] = {"SAW", "PULSE"};
 
 /* PW 0 .. 126 as the phase (Q32) the pulse stays high for: 5 % + v * 90 % / 126 (63 = 50 %) */
 static inline uint32_t sem_pw(int32_t v) { return 214748365u + (uint32_t)clamp(v, 0, SEM_PW_MAX) * 30678338u; }
+/* the smoothed PWs live in ph[1], Q8, 16 bits each: PW1 high; a note starts on the knobs' values */
+static inline uint32_t sem_pw_start(const int16_t *p) { return (uint32_t)clamp(p[P_S1], 0, SEM_PW_MAX) << 24 | (uint32_t)clamp(p[P_S3], 0, SEM_PW_MAX) << 8; }
+/* the width from the smoothed PW (Q8) */
+static inline uint32_t sem_pwq(uint32_t q)
+{
+    if (q > SEM_PW_MAX * 256u)
+        q = SEM_PW_MAX * 256u;
+    return 214748365u + (q >> 8) * 30678338u + (q & 255u) * 119837u;
+}
 
 /* the naive shape at phase ph (+-32768): SAW, or the zero-mean PULSE (osc_pulse without the BLEPs); the UI draws it */
 static inline int32_t sem_naive(int32_t pulse, uint32_t ph, uint32_t pw)
@@ -37,17 +46,18 @@ static void sem_note_on(track_t *t, voice_t *v)
     v->s[0] = v->s[1] = v->s[4] = v->s[5] = v->s[6] = v->s[7] = v->s[8] = v->s[9] = 0;
     v->s[2] = t->p[P_E2] << 8;
     v->s[3] = t->p[P_E3] << 8;
+    v->ph[1] = sem_pw_start(t->p);
 }
 
 /* the oscillators' block, mixed, into xbuf (the filter's input), two samples late (the BLEP reaches back two); state ph[0], ph[2],
  * s[6] s[8] the last two samples, s[9] the correction waiting for the next. W1, W2 (PULSE) and SYNC are constants where the wave and
  * SYNC are known: sem_osc picks the loop, so a SAW does not pay for the PULSE's second edge */
 _Static_assert(CTL <= HALF_FRAMES, "sem_osc: the block fits xbuf");
-__attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m, const int W1, const int W2,
-                                                          const int SYNC)
+__attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m, uint32_t pw1, uint32_t pw2,
+                                                          const int W1, const int W2, const int SYNC)
 {
     int32_t mx = clamp(p[P_S7], 0, 128), wa = 128 - mx, p1 = v->s[6], p2 = v->s[8], c1 = v->s[9];
-    uint32_t i, ph1 = v->ph[0], ph2 = v->ph[2], inc1 = m->inc, pw1 = sem_pw(p[P_S1]), pw2 = sem_pw(p[P_S3]), q;
+    uint32_t i, ph1 = v->ph[0], ph2 = v->ph[2], inc1 = m->inc, q;
     uint32_t inc2 = cents_inc(m->pitch16, (p[P_S4] - 24) * 100 + p[P_S5] - 50, m->fine), d1 = (inc1 >> 15) ? inc1 >> 15 : 1u;
     uint32_t d2 = (inc2 >> 15) ? inc2 >> 15 : 1u;
     const int32_t jw1 = W1 ? 32768 : 65536, jw2 = W2 ? 32768 : 65536;   /* a PULSE's edges are half a saw's step */
@@ -90,10 +100,16 @@ __attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voi
 }
 static void sem_osc(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m)
 {
+    uint32_t pq1 = v->ph[1] >> 16, pq2 = v->ph[1] & 0xFFFFu;
+    int32_t g1 = (clamp(p[P_S1], 0, SEM_PW_MAX) << 8) - (int32_t)pq1, g2 = (clamp(p[P_S3], 0, SEM_PW_MAX) << 8) - (int32_t)pq2;
+    pq1 += (uint32_t)(g1 >> 2);                          /* PW glides like CUT: a knob step does not tick */
+    pq2 += (uint32_t)(g2 >> 2);
+    v->ph[1] = pq1 << 16 | pq2;
+    uint32_t pw1 = sem_pwq(pq1), pw2 = sem_pwq(pq2);
     if (p[P_S0] || p[P_S2] || p[P_S6])
-        sem_loop(p, v, n, m, p[P_S0] != 0, p[P_S2] != 0, p[P_S6] != 0);   /* PULSE, SYNC: the waves and SYNC tested as it runs */
+        sem_loop(p, v, n, m, pw1, pw2, p[P_S0] != 0, p[P_S2] != 0, p[P_S6] != 0);   /* PULSE, SYNC: the waves and SYNC tested as it runs */
     else
-        sem_loop(p, v, n, m, 0, 0, 0);                  /* two SAWs, the common one, without the rest */
+        sem_loop(p, v, n, m, pw1, pw2, 0, 0, 0);                  /* two SAWs, the common one, without the rest */
 }
 
 static void sem_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
