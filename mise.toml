@@ -36,14 +36,15 @@ docker info >/dev/null 2>&1 || { echo "build:docker: Docker is not running; star
 '''
 
 [tasks.test]
-description = "Host tests (needs a prior build)"
-depends = ["setup"]
+description = "Host tests"
+depends = ["build"]
 # emsdk for the browser-emulator tests; its own clang shadows ours on PATH, so pin CC by path.
 tools = { "asdf:mise-plugins/mise-emsdk" = "4.0.10" }
 run = 'CC="$(mise which clang)" tests/run_tests.sh'
 
 [tasks.smoke]
 description = "Boot build/kosmo.bin in fm1-emulator (set FM1_EMULATOR)"
+depends = ["build"]
 run = "tools/emu_smoke.sh"
 
 [tasks.usb-check]
@@ -52,21 +53,25 @@ depends = ["setup"]
 run = "tools/usb_check.sh"
 
 [tasks.web]
-description = "Build the browser emulator (web/emu/build.sh; needs a prior build)"
+description = "Build the browser emulator (web/emu/build.sh)"
+depends = ["build"]
 # Task-scoped: emsdk's install dir has a `docker` folder that would shadow the docker CLI on PATH.
 tools = { "asdf:mise-plugins/mise-emsdk" = "4.0.10" }
 run = "sh web/emu/build.sh"
 
 [tasks.emu-check]
 description = "Headless emulator run: visit every page, turn knobs, play a note, compare LCD snapshots with tests/emu_ref (--update rewrites)"
+depends = ["build"]
 run = "python tools/emu_check.py"
 
 [tasks.emu-load]
 description = "Headless emulator run: guest audio-ISR load with a chord at FAT 0 / 4 and the length of a WAVE redraw, against limits (issue #17)"
+depends = ["build"]
 run = "python tools/emu_load.py"
 
 [tasks.stress]
 description = "fm1-emulator tests/stress.py against build/kosmo.bin with a fixed seed"
+depends = ["build"]
 run = '''
 EMU_DIR="$(dirname "${FM1_EMULATOR:-$HOME/src/fm1-emulator/emulator}")"
 python "$EMU_DIR/tests/stress.py" build/kosmo.bin --seed 1 --output "$(mktemp -d)/stress"
