@@ -18,8 +18,8 @@ mise run setup   # Pillow, fontTools, the JieLi toolchain (~/.jieli) and the AC7
 mise run build   # ./build.sh
 ```
 
-Tasks: `build:docker` (forces the `linux/amd64` container, checks Docker first), `test`, `smoke`,
-`web` (browser emulator with Emscripten, task-scoped). External, not managed by mise:
+Tasks (each lists what it depends on in `mise.toml`): `build:docker` (forces the `linux/amd64` container, checks Docker first), `test`, `smoke`,
+`usb-check`, `emu-check`, `emu-load`, `stress`, `web` (browser emulator with Emscripten, task-scoped). External, not managed by mise:
 
 - Docker (Docker Desktop, OrbStack, ...): required on macOS, since the JieLi toolchain is Linux x86-64
   only; the build runs each tool in a `debian:bookworm-slim` container. Keep the tree under `/Users`.
@@ -80,7 +80,7 @@ tests/run_tests.sh
 Runs the host tests and, with Node.js and Emscripten, the browser emulator's. Run it after `./build.sh`
 (it uses `build/` and needs `AC79_SDK` set as for the build). The suites cover flash storage, the settings, the keys
 and knobs, MIDI (USB, TRS, bend, sustain, panic), USB audio, the update entry and loader, the command-line
-installer, the fonts and palettes, and the DSP (the voices, the WAVE engine and its filter, the ROOM reverb, the
+installer, the fonts and palettes, and the DSP (the voices, the WAVE engine and its filter, the ECHO and SPACE effects, the
 master).
 
 The regression suite (`tests/regress.c`) renders the test sounds, waves, filter types, voice modes, reverb settings,
