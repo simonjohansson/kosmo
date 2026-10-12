@@ -15,10 +15,13 @@
 #define PH 122
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
-#define NPG 6                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE; 5: SETTINGS (GLO) */
+#define NPG 8                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE; 5: SETTINGS (GLO); 6, 7: SEM's 1/2 and 2/2 (HOME, the SEM engine) */
 #define PG_SPACE 3
 #define PG_ECHO 4
 #define PG_SET 5
+#define PG_SEM1 6
+#define PG_SEM2 7
+#define UI_SEM (trk[0].p[P_ENG] == 1)   /* the engine ALGORITHM chose */
 static int16_t set_ec;                      /* SETTINGS K1: ECHO STEREO, 0 PING-PONG / 1 STEREO (kept in settings.lowcut as ECHO_STEREO_TAG) */
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[NPG] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], NWAVES - 1, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
@@ -32,7 +35,13 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
     {B_FX, "ECHO", RGB(255, 96, 40), {{"Time", &song.g[G_ETIME], 127, 4}, {"Repeats", &song.g[G_EFB], 127, 4},
                                       {0, &song.g[G_ECHAR], 4, 1}, {"Amount", &song.g[G_EAMT], 127, 4}}},
     {B_GLO, "SETTINGS", RGB(170, 120, 255), {{0, &set_ec, 1, 1}}},
+    {B_HOME, "SEM", RGB(120, 255, 140), {{0, &trk[0].p[P_S0], 1, 1}, {"PW 1", &trk[0].p[P_S1], SEM_PW_MAX, 3},
+                                         {0, &trk[0].p[P_S2], 1, 1}, {"PW 2", &trk[0].p[P_S3], SEM_PW_MAX, 3}}},
+    {B_HOME, "SEM", RGB(120, 255, 140), {{"Tune", &trk[0].p[P_S4], 48, 1}, {"Fine", &trk[0].p[P_S5], 100, 2},
+                                         {0, &trk[0].p[P_S6], 1, 1}, {"Mix", &trk[0].p[P_S7], 128, 4}}},
 };
+static const char *const SEM_W_NAME[2][2] = {{"1 Saw", "1 Pulse"}, {"2 Saw", "2 Pulse"}};
+static const char *const SEM_SYNC_NAME[2] = {"Free", "Sync"};
 static const char *const SET_EC_NAME[2] = {"Ping-pong", "Stereo"};
 static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
 static const char *const SP_NAME[6] = {"Bedroom", "Castle", "Plate", "Cloud", "Gated", "Wobble"};   /* the bar is 52 px wide */
@@ -40,6 +49,7 @@ static const char *const SP_FULL[6] = {"BEDROOM", "CASTLE", "METAL PLATE", "CLOU
 static const char *const EC_NAME[5] = {"Clean", "Crunch", "Toy", "Back", "Robot"};   /* BACKWARDS: the bar is 52 px wide */
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
+static uint8_t ui_bkind;                    /* what it shows: 0 the preset, 1 the engine (ALGORITHM) */
 static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
 static uint32_t ui_last, ui_ring;           /* last redraw (ms), ring animation step */
 static int8_t ui_led = -1;
@@ -141,6 +151,35 @@ static void pic_wave(void)
     }
     wave_layer(0);
     glow_pts(128, PG[0].bg);
+}
+
+/* SEM: VCO1, VCO2 and their mix as three glowing traces on one time axis (VCO1 three cycles wide). PW shows in the pulse, TUNE and FINE in
+ * VCO2's speed, SYNC restarts VCO2 at every VCO1 cycle; MIX lights the source it favours and the mix itself. */
+static void pic_sem(void)
+{
+    const int16_t *p = trk[0].p;
+    int32_t a[100], b[100], i, j, mx = clamp(p[P_S7], 0, 128), ratio;
+    uint32_t pw1 = sem_pw(p[P_S1]), pw2 = sem_pw(p[P_S3]), st1 = 128849019u, st2, ph1 = 0, ph2 = 0;
+    static const char *const L[3] = {"1", "2", "MIX"};
+    ratio = (int32_t)(pitch_inc((uint32_t)(960 + (p[P_S4] - 24) * 16 + (p[P_S5] - 50) * 16 / 100)) / (pitch_inc(960) >> 8));
+    st2 = (st1 >> 8) * (uint32_t)ratio;
+    for (i = 0; i < 100; i++) {
+        a[i] = sem_naive(p[P_S0], ph1, pw1);
+        b[i] = sem_naive(p[P_S2], ph2, pw2);
+        ph1 += st1;
+        ph2 = p[P_S6] && ph1 < st1 ? 0u : ph2 + st2;
+    }
+    for (j = 0; j < 3; j++) {
+        int32_t cy = PY + 21 + 40 * j;
+        uint16_t c = PG[PG_SEM1].bg;
+        for (i = 0; i < 100; i++) {
+            int32_t y = j == 0 ? a[i] : j == 1 ? b[i] : (a[i] * (128 - mx) + b[i] * mx) >> 7;
+            pt[i][0] = (int16_t)(PX + 28 + i * 184 / 99);
+            pt[i][1] = (int16_t)(cy - ((y * 15) >> 15));
+        }
+        glow_pts(100, j == 2 ? c : ux_mix(0, c, 25 + (j ? mx : 128 - mx) * 45 / 128));
+        cv_text(PX + 4, cy - 8, &AF_S, L[j], ux_mix(0, c, 60));
+    }
 }
 
 static void pic_env(void)
@@ -273,10 +312,15 @@ static void pic_settings(void)
 
 static void banner(void)
 {
-    const char *n = PRESETS[ui_preset].name;
+    const char *n = ui_bkind ? ENGINES[clamp(trk[0].p[P_ENG], 0, NENG - 1)]->name : PRESETS[ui_preset].name;
     char s[8] = "1 / 8";
     int32_t w = text_w(&AF_L, n) + 24, x = (240 - w) / 2;
     s[0] = (char)('1' + ui_preset);
+    if (ui_bkind) {                             /* the engine: its name over ENGINE */
+        w = text_w(&AF_L, n) > text_w(&AF_M, "ENGINE") ? w : text_w(&AF_M, "ENGINE") + 24;
+        x = (240 - w) / 2;
+        memcpy(s, "ENGINE", 7);
+    }
     cv_rect(x, 78, w, 74, 0);
     graticule(x, 78, w, 74, PG[0].bg);
     glow_box(x + 4, 82, w - 8, 66, PG[0].bg);
@@ -292,14 +336,14 @@ static void scene(void)
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[clamp(trk[0].p[P_E0], 0, NWAVES - 1)];
     if (ui_hit(R_TITLE)) {
         cv_text(12, 4, &AF_L, title, bg);
-        if (PG[ui_page].btn == B_FX) {                         /* which FX page: 1/2 ECHO, 2/2 SPACE */
-            const char *t = ui_page == PG_ECHO ? "1/2" : "2/2";
+        if (PG[ui_page].btn == B_FX || ui_page >= PG_SEM1) {   /* which FX page: 1/2 ECHO, 2/2 SPACE; SEM's 1/2, 2/2 */
+            const char *t = ui_page == PG_ECHO || ui_page == PG_SEM1 ? "1/2" : "2/2";
             cv_text(228 - text_w(&AF_M, t), 12, &AF_M, t, bg);
         }
     }
     if (ui_hit(R_PIC)) {
         graticule(PX, PY, PW, PH, bg);
-        (ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : ui_page == PG_SET ? pic_settings : pic_space)();
+        (ui_page >= PG_SEM1 ? pic_sem : ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : ui_page == PG_SET ? pic_settings : pic_space)();
     }
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
@@ -307,7 +351,7 @@ static void scene(void)
         if (!ui_hit(bar_rc(i)))
             continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
-        const char *name = k->name ? k->name : ui_page == PG_SET ? SET_EC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
+        const char *name = k->name ? k->name : ui_page == PG_SET ? SET_EC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_SEM1 ? SEM_W_NAME[i >> 1][clamp(*k->v, 0, 1)] : ui_page == PG_SEM2 ? SEM_SYNC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
@@ -358,7 +402,7 @@ static void ui_input(void)
         song.octave++;
     for (i = 0; i < 4u; i++)
         if (pressed & (1u << panel.btn[PG[i].btn]))
-            ui_page = (uint8_t)(i == PG_SPACE ? (ui_page == PG_ECHO ? PG_SPACE : PG_ECHO) : i);   /* FX: ECHO, SPACE, ECHO ... */
+            ui_page = (uint8_t)(i == PG_SPACE ? (ui_page == PG_ECHO ? PG_SPACE : PG_ECHO) : i == 0 && UI_SEM ? (ui_page == PG_SEM1 ? PG_SEM2 : PG_SEM1) : i);   /* FX: ECHO, SPACE, ECHO ...; SEM: 1/2, 2/2 */
     if (pressed & (1u << panel.btn[B_GLO]))
         ui_page = PG_SET;
     pst = panel_enc(EN_PRESET);
@@ -366,7 +410,16 @@ static void ui_input(void)
         ui_preset = (uint8_t)((ui_preset + pst % (int32_t)NPRESETS + (int32_t)NPRESETS) % (int32_t)NPRESETS);
         preset_load(ui_preset);
         ui_banner = fm1_ms + 1500u;
+        ui_bkind = 0;
     }
+    pst = panel_enc(EN_ALGO);
+    if (pst) {                                  /* ALGORITHM: the engine, with its name shown for 1.5 s */
+        trk[0].p[P_ENG] = (int16_t)((trk[0].p[P_ENG] + pst % NENG + NENG) % NENG);
+        ui_banner = fm1_ms + 1500u;
+        ui_bkind = 1;
+    }
+    if (PG[ui_page].btn == B_HOME)              /* HOME is the engine's: WAVE, or SEM's 1/2 and 2/2 */
+        ui_page = (uint8_t)(UI_SEM ? (ui_page == PG_SEM2 ? PG_SEM2 : PG_SEM1) : 0);
     if (ui_banner && (int32_t)(fm1_ms - ui_banner) >= 0)
         ui_banner = 0;
     set_ec = settings.lowcut == ECHO_STEREO_TAG;
@@ -401,7 +454,7 @@ static void ui_input(void)
     for (i = 0; i < 4u; i++)
         sig[1 + i] = PG[ui_page].k[i].v ? *PG[ui_page].k[i].v : 0;
     sig[5] = (int16_t)ui_ring;
-    sig[6] = (int16_t)(ui_banner ? 1 + ui_preset : 0);
+    sig[6] = (int16_t)(ui_banner ? (ui_bkind ? 100 + trk[0].p[P_ENG] : 1 + ui_preset) : 0);
     if (!memcmp(sig, ui_sig, sizeof sig))
         return;
     ui_last = fm1_ms;
@@ -463,6 +516,11 @@ static void perf_cc(uint32_t cc, uint32_t v)
         song.g[G_EAMT] = (int16_t)v;
     else if (cc == 111u)
         song.g[G_RPROG] = (int16_t)(v % 6u);
+    else if (cc == 113u) {                           /* the engine: 0 WAVE, 1 SEM, 2 SEM with PULSE + PULSE + SYNC (its dearest) */
+        trk[0].p[P_ENG] = (int16_t)(v ? 1 : 0);
+        trk[0].p[P_S0] = trk[0].p[P_S2] = trk[0].p[P_S6] = (int16_t)(v == 2u);
+        trk[0].p[P_S4] = (int16_t)(v == 2u ? 31 : 24);
+    }
     else
         trk[0].p[P_REV] = (int16_t)v;                /* 112: SPACE amount */
 }
