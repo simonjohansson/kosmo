@@ -555,7 +555,6 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         m.cutoff = (m.envq15 * p[P_ED_FLT]) >> 7;
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
-        m.shape = (64 << 8) + ((m.envq15 * p[P_ED_SHP]) >> 7);
         tr_side |= v->fk ? 1u : 0u;
         PFX(2, e->render(t, v, out + (v->fk ? (v->fk < 0 ? n : 2u * n) : 0u), n, &m));
         nr++;

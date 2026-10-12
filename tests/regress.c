@@ -635,6 +635,38 @@ static int chk_scan_glide(char *msg, uint32_t n)
     return mono && k90 * CTL * 1000u >= 40u * FS && k90 * CTL * 1000u <= 400u * FS && prev > hi - 256;
 }
 
+/* a fast attack and decay on a held SCAN (P_ED_SHP set, which must do nothing): the frame pair and weight stay the same */
+static int chk_scan_env(char *msg, uint32_t n)
+{
+    uint32_t k, moved = 0, bad = 0;
+    const int16_t *a0 = 0, *b0 = 0;
+    int32_t w0 = 0, e0 = -1;
+    track_t *t = &trk[0];
+    host_tracks_init();
+    t->p[P_E0] = 5;
+    t->p[P_E1] = 60;
+    t->p[P_ATK] = 0;
+    t->p[P_DEC] = 60;
+    t->p[P_SUS] = 0;
+    t->p[P_ED_SHP] = 40;
+    t->p[P_REV] = 0;
+    trk_note_on(t, 54, 100);
+    for (k = 0; k < 100u; k++) {                      /* ~0.3 s of attack and decay */
+        uint32_t v;
+        blk();
+        for (v = 0; v < NVOICE && !t->v[v].active; v++)
+            ;
+        if (k == 0) {
+            a0 = wb_a; b0 = wb_b; w0 = wb_w;
+        }
+        moved |= v < NVOICE && e0 >= 0 && t->v[v].env != e0;
+        e0 = v < NVOICE ? t->v[v].env : e0;
+        bad += wb_a != a0 || wb_b != b0 || wb_w != w0;
+    }
+    snprintf(msg, n, "SCAN with a fast ENV (SHP 40): envelope moved %s, %u of 100 blocks changed frame", moved ? "yes" : "NO", bad);
+    return moved && !bad;
+}
+
 /* a sine at column x of the FILTER page through the real filter (ft, CUT, RES): its gain in dB */
 static double meas_db(uint32_t ft, int32_t cut, int32_t res, int32_t x)
 {
@@ -1657,6 +1689,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: SCAN sweep without clicks")->check = chk_scan;
     add(J_CHECK, "wave: SCAN ramp, smooth brightness")->check = chk_scan_ramp;
     add(J_CHECK, "wave: SCAN glide of one detent")->check = chk_scan_glide;
+    add(J_CHECK, "wave: SCAN ignores the envelope")->check = chk_scan_env;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;

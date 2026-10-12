@@ -10,14 +10,13 @@ typedef struct {
     int8_t fenv;
     uint8_t fat, detune;         /* FAT copies, DETUNE */
     uint8_t echo[4];             /* ECHO TIME REPEATS CHARACTER AMOUNT; AMOUNT 0: off, the others at their power-on values */
-    int8_t senv;                 /* ENV -> SCAN amount (P_ED_SHP; no knob has it) */
 } preset_t;
 
 static const preset_t PRESETS[] = {
-    {"SPACE WHALE", {5, 38, 60, 40}, 0, {90, 90, 110, 100}, 100, 127, 3, V_POLY, 10, 2, 60, {0}, .senv = 40},
-    {"LASER CAT", {1, 90, 100, 90}, 1, {0, 50, 20, 30}, 20, 40, 2, V_LEGATO, 48, 0, 0, {36, 64, EC_CLEAN, 50}, -40},
+    {"SPACE WHALE", {5, 38, 60, 40}, 0, {90, 90, 110, 100}, 100, 127, 3, V_POLY, 10, 2, 60, {0}},
+    {"LASER CAT", {1, 90, 100, 90}, 1, {0, 50, 20, 30}, 20, 40, 2, V_LEGATO, 48, 0, 0, {36, 64, EC_CLEAN, 50}},
     {"ROBOT DOG", {0, 40, 90, 30}, 0, {4, 70, 100, 50}, 40, 30, 4, V_LEGATO, 20, 0, 0, {70, 0, EC_ROBOT, 70}},
-    {"MAGIC BELLS", {7, 90, 70, 20}, 2, {0, 88, 0, 60}, 90, 100, 1, V_POLY, 30, 0, 0, {0}, -30},
+    {"MAGIC BELLS", {7, 90, 70, 20}, 2, {0, 88, 0, 60}, 90, 100, 1, V_POLY, 30, 0, 0, {0}},
     {"TOY ORGAN", {10, 60, 127, 0}, 0, {2, 80, 100, 40}, 30, 60, 0, V_POLY, 0},
     {"BUZZY BEE", {2, 80, 70, 70}, 4, {0, 60, 40, 30}, 10, 20, 0, V_LEGATO, 30},
     {"GLASS GHOST", {9, 50, 80, 50}, 3, {60, 80, 90, 80}, 100, 110, 5, V_POLY, 0},
@@ -39,7 +38,6 @@ static void preset_load(uint32_t i)
     trk[0].p[P_REV] = s->rev;
     trk[0].p[P_VOICE] = s->voice;
     trk[0].p[P_ED_FLT] = s->fenv;
-    trk[0].p[P_ED_SHP] = s->senv;
     song.g[G_RSIZE] = s->rsize;
     song.g[G_RPROG] = s->rprog;
     song.g[G_RTONE] = GP[G_RTONE].def;

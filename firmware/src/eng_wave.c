@@ -2,8 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* WAVE: one wavetable oscillator through a Moog ladder filter (LP / BP / HP / NOTCH) or a comb (P_FTYPE).
  * WAVE picks one of 12 tables, SCAN moves through its 64 frames (each table a designed morph), CUT and RES set the filter.
- * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). CUT and RES are smoothed once per block; SCAN glides (~45 ms) in Q16,
- * and ENV -> SCAN (P_ED_SHP) adds the note's envelope to it. */
+ * Tables: build/gen/kosmo_waves.h (tools/gen_waves.py). CUT and RES are smoothed once per block; SCAN glides (~45 ms) in Q16. */
 #include "kosmo_waves.h"
 
 /* the order of TABLES in tools/gen_waves.py; AF_L has no lowercase, so upper case only */
@@ -61,14 +60,6 @@ static inline int32_t blend_read(const int16_t *tab, uint32_t ph)
     return a + (((tab[i + 1u] - a) * (int32_t)((ph >> 9) & 0x7FFFu)) >> 15);
 }
 
-/* ENV -> SCAN (P_ED_SHP): each voice has its own pair and weight, and a shared frame would be rebuilt for every voice every
- * block (+18 points of load with 8 voices). A voice whose position moved since its last block reads the pair per sample
- * (about 5 instructions a sample more than the frame); one that stood still reads a frame of its own, rebuilt only
- * when its position changes, so a held note costs nothing. */
-typedef struct { const int16_t *a, *b; int32_t w; } wkey_t;
-static wkey_t sh_last[NVOICE], sh_built[NVOICE];
-static int16_t sh_tab[NVOICE][257];
-
 /* sample i (0..255) of the frame SCAN (0..127) of table, for the UI to draw */
 int16_t wave_peek(int table, int scan, int i)
 {
@@ -89,8 +80,7 @@ static void wave_note_on(track_t *t, voice_t *v)
     v->s[6] = t->p[P_E1] << 16;
 }
 
-static inline __attribute__((always_inline)) void wave_render_x(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m,
-                                                                const int shp)
+static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
 #if KOSMO_PERF
     uint32_t _tw = fm1_ticks();
@@ -101,24 +91,8 @@ static inline __attribute__((always_inline)) void wave_render_x(track_t *t, voic
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
     ss += ((p[P_E1] << 16) - ss) >> 6;                /* a one-pole of 64 blocks (tau 43 ms): a detent is a sweep */
-    wave_frames(p[P_E0], clamp((ss >> 8) + m->shape - (64 << 8), 0, 127 << 8), &fa, &fb, &w);
-    const int16_t *tab = wb_tab;
-    uint32_t mv = 0;
-    if (!shp) {
-        wave_blend(fa, fb, w);
-    } else {
-        uint32_t vi = (uint32_t)(v - t->v);
-        wkey_t k = {fa, fb, w};
-        mv = fa != sh_last[vi].a || fb != sh_last[vi].b || w != sh_last[vi].w;
-        sh_last[vi] = k;
-        if (!mv) {
-            if (fa != sh_built[vi].a || fb != sh_built[vi].b || w != sh_built[vi].w) {
-                blend_fill(sh_tab[vi], fa, fb, w);
-                sh_built[vi] = k;
-            }
-            tab = sh_tab[vi];
-        }
-    }
+    wave_frames(p[P_E0], clamp(ss >> 8, 0, 127 << 8), &fa, &fb, &w);
+    wave_blend(fa, fb, w);
     bq = (m->amp0 * VOICE_FS) >> 7;                   /* the amplitude ramp times VOICE_FS, Q8 */
     bstep = (((m->amp1 * VOICE_FS) >> 7) - bq) >> CTL_LOG2;
     if (ft > 4u)
@@ -133,7 +107,7 @@ static inline __attribute__((always_inline)) void wave_render_x(track_t *t, voic
             v->s[7] = 1;
         }
         for (i = 0; i < n; i++) {
-            s = (mv ? wave_read(fa, fb, w, ph) : blend_read(tab, ph)) >> 1;
+            s = blend_read(wb_tab, ph) >> 1;
             ph += inc;
             s = soft_knee(comb_tap(buf, &v->ph[1], d, g, s), 16000);
             out[i] += (s * (bq >> 8)) >> 13;
@@ -147,7 +121,7 @@ static inline __attribute__((always_inline)) void wave_render_x(track_t *t, voic
 #endif
 #define LAD_LOOP(FT)                                                                           \
     for (i = 0; i < n; i++) {                                                                  \
-        s = mv ? wave_read(fa, fb, w, ph) : blend_read(tab, ph);                               \
+        s = blend_read(wb_tab, ph);                                                    \
         ph += inc;                                                                             \
         s = soft_knee(lad_tap(&flt, st, s >> 1, FT), 16000);                                   \
         out[i] += (s * (bq >> 8)) >> 13;                                                       \
@@ -171,19 +145,6 @@ static inline __attribute__((always_inline)) void wave_render_x(track_t *t, voic
     v->s[2] = sc;
     v->s[3] = sr;
     v->s[6] = ss;
-}
-
-static __attribute__((noinline)) void wave_render_shp(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
-{
-    wave_render_x(t, v, out, n, m, 1);
-}
-
-static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
-{
-    if (t->p[P_ED_SHP])
-        wave_render_shp(t, v, out, n, m);
-    else
-        wave_render_x(t, v, out, n, m, 0);
 }
 
 static const engine_t ENG_WAVE = {

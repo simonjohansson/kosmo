@@ -28,11 +28,8 @@ BAR_BYTES = 58 * 60 * 2
 BURST = 12                          # detents 25 ms apart: DETUNE must move BURST * 4
 SPI_BPS = 12_000_000 // 8
 SPACE_MAX = {"CLOUD": 54, "GATED": 61}  # #26: measured 52.3 / 59.0; GATED 54.7 with #25 + #27; FAT 4 + ECHO CLEAN + SPACE on its 2/2 page, AMOUNT up (issue #27: 8 lines, measured 46.9 at the 22 kHz tank, 52.7 at 32 kHz; the 4-line one 39.8; the worst half stays at 1.5 ms of 2.1)
-PRESETS = ("f13", "f14")
 K1, K2, K3, K4 = ("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")   # knobs (tools/emu_check.py)
 CHORD = ("z", "m", "slash")
-CHORD8 = ("z", "x", "c", "v", "b", "n", "m", "comma")   # 8 voices
-SHP_MAX = {0: 51, 1: 50}                     # #26: measured 49.6 / 48.0; 46.5 / 43.8 with #25 + the 8-line SPACE (#27); before: presets 0 SPACE WHALE (SHP +40, FAT 2), 1 LASER CAT (SHP -40) + FAT 4; 8 notes, retriggered (measured 39.1 / 33.2; 34.0 / 30.9 with SHP 0)
 
 
 def sym(elf, name):
@@ -47,14 +44,10 @@ def detents(ev, t, knob, n, gap=120):
     return t
 
 
-def run(fw, fat, chord, steps, gap=120, echo=None, space=None, preset=None, retrig=False):
+def run(fw, fat, chord, steps, gap=120, echo=None, space=None):
     ev = []
-    if preset is not None:                           # PRESETS n steps (it sets FAT, ECHO and SPACE too); fat: knob steps after it
-        t = detents(ev, 18 * S, PRESETS, preset, 150)
-        t = detents(ev, t, K3, fat, 150) if fat > 0 else t
-    else:
-        t = detents(ev, 19 * S, K3[::-1], 4)        # FAT is 2 after boot: down to 0 ...
-        detents(ev, t, K3, fat)                      # ... then up
+    t = detents(ev, 19 * S, K3[::-1], 4)            # FAT is 2 after boot: down to 0 ...
+    detents(ev, t, K3, fat)                          # ... then up
     if echo is not None:                             # ECHO: the FX button, AMOUNT 0 -> 64, CHARACTER echo steps (CLEAN 0, BACKWARDS 3)
         ev += [(19950 * MS, "f1", 1), (20000 * MS, "f1", 0)]
         t = detents(ev, 20100 * MS, K4, 16)
@@ -65,10 +58,7 @@ def run(fw, fat, chord, steps, gap=120, echo=None, space=None, preset=None, retr
             t = detents(ev, t, K2, 4)
             detents(ev, t, K3, space)
     for k in chord:
-        if retrig:                                   # a new chord every 1.2 s: the envelope keeps moving
-            ev += [x for j in range(5) for x in ((20 * S + j * 1200 * MS, k, 1), (20 * S + j * 1200 * MS + 1000 * MS, k, 0))]
-        else:
-            ev += [(20 * S, k, 1), (26 * S, k, 0)]
+        ev += [(20 * S, k, 1), (26 * S, k, 0)]
     detents(ev, 20 * S, K4, steps, gap)                   # DETUNE: each step is one WAVE redraw
     elf = fw.with_suffix(".elf")
     pcs = f"{sym(elf, 'cv_begin'):x},{sym(elf, 'cv_blit'):x}" if steps else ""
@@ -114,10 +104,6 @@ def main():
         if r["load"] > SPACE_MAX[name]: bad.append(f"FAT 4 + ECHO + SPACE {name}: load {r['load']:.1f}% > {SPACE_MAX[name]}%")
         if r["max_us"] > WORST_US: bad.append(f"FAT 4 + ECHO + SPACE {name}: worst half {r['max_us']} us > {WORST_US}")
         if r["late"]: bad.append(f"FAT 4 + ECHO + SPACE {name}: {r['late']} late halves (underrun)")
-    for pre, fat, name in ((0, 0, "SPACE WHALE (SHP on) FAT 2"), (1, 4, "LASER CAT (SHP on) FAT 4")):
-        r = run(fw, fat, CHORD8, 0, preset=pre, retrig=True)
-        print(f"8 notes retriggered, {name}, its ECHO and SPACE: load {r['load']:.1f}% (max {SHP_MAX[pre]}), worst half {r['max_us']} us (max {WORST_US}), late {r['late']}")
-        if r["load"] > SHP_MAX[pre] or r["max_us"] > WORST_US or r["late"]: bad.append(f"{name}: load {r['load']:.1f}%, worst {r['max_us']} us, late {r['late']}")
     base = run(fw, 4, CHORD, 0)                 # (the chord changes nothing on HOME's screen)
     r = run(fw, 4, (), 4)
     per = (r["bytes"] - base["bytes"]) // 4
