@@ -1475,11 +1475,14 @@ static int chk_fat(char *msg, uint32_t n)
 static int chk_presets(char *msg, uint32_t n)
 {
     uint64_t h[64];
-    uint32_t i, j, silent = 0, same = 0;
+    uint32_t i, j, silent = 0, same = 0, eng = 0;
     track_t *t = &trk[0];
     for (i = 0; i < NPRESETS; i++) {
         host_tracks_init();
+        trk[0].p[P_ENG] = (int16_t)(i < 8u);                 /* (loading sets it either way) */
         preset_load(i);
+        eng += t->p[P_ENG] != (i >= 8u);
+        t->eng = (uint8_t)t->p[P_ENG];                       /* (the engine takes over at the next block, with no voice yet) */
         R.hash = 0xcbf29ce484222325ull;
         R.peak = 0;
         trk_note_on(t, 60, 100);
@@ -1492,8 +1495,8 @@ static int chk_presets(char *msg, uint32_t n)
             same += h[j] == h[i];
         run_to(fpos + 2u * FS);                       /* let the voice and the tail die before the next */
     }
-    snprintf(msg, n, "%u factory presets: %u silent, %u identical to another", NPRESETS, silent, same);
-    return NPRESETS >= 8u && !silent && !same;
+    snprintf(msg, n, "%u factory presets (the first 8 WAVE, the rest SEM): %u silent, %u identical to another, %u on the wrong engine", NPRESETS, silent, same, eng);
+    return NPRESETS >= 12u && !silent && !same && !eng;
 }
 
 /* ---- ECHO (issue #20) ---- */

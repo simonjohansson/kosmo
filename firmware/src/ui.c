@@ -313,9 +313,18 @@ static void pic_settings(void)
 static void banner(void)
 {
     const char *n = ui_bkind ? ENGINES[clamp(trk[0].p[P_ENG], 0, NENG - 1)]->name : PRESETS[ui_preset].name;
-    char s[8] = "1 / 8";
+    char s[12];
+    uint32_t k = 0, a = (uint32_t)ui_preset + 1u;
     int32_t w = text_w(&AF_L, n) + 24, x = (240 - w) / 2;
-    s[0] = (char)('1' + ui_preset);
+    if (a > 9u)
+        s[k++] = (char)('0' + a / 10u);
+    s[k++] = (char)('0' + a % 10u);
+    memcpy(s + k, " / ", 3);
+    k += 3;
+    if (NPRESETS > 9u)
+        s[k++] = (char)('0' + NPRESETS / 10u);
+    s[k++] = (char)('0' + NPRESETS % 10u);
+    s[k] = 0;
     if (ui_bkind) {                             /* the engine: its name over ENGINE */
         w = text_w(&AF_L, n) > text_w(&AF_M, "ENGINE") ? w : text_w(&AF_M, "ENGINE") + 24;
         x = (240 - w) / 2;
