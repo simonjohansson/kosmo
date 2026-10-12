@@ -69,6 +69,8 @@ def script():
     snap("09_settings_knobs")
     turn(KNOB[1], 1)                                        # K2: SEM UNISON ON
     snap("09_settings_unison")
+    turn(KNOB[2], 1)                                        # K3: LFO RETRIG ON
+    snap("09_settings_retrig")
     turn(ALGO, 1)                                           # ALGORITHM: the engine banner (SEM), then HOME is SEM's 1/2 and 2/2
     snap("10_sem_banner")
     t += 1200 * MS
@@ -82,6 +84,23 @@ def script():
     for k in range(4):
         turn(KNOB[k])
     snap("10_sem_page2_knobs")
+    press("o")                                              # LFO: LFO 1 with SEM's targets (1/2), K1 shape, K2 rate, K3 depth, K4 target; again LFO 2 (2/2)
+    snap("11_lfo1_sem_page")
+    for k, d in enumerate((2, 3, 10, 1)):
+        turn(KNOB[k], d)
+    snap("11_lfo1_sem_knobs")
+    press("o")
+    snap("11_lfo2_page")
+    for k, d in enumerate((1, 5, 12, 4)):
+        turn(KNOB[k], d)
+    snap("11_lfo2_knobs")
+    turn(ALGO[::-1], 1)                                     # ALGORITHM back to WAVE: LFO 1 shows WAVE's targets
+    t += 1200 * MS
+    press("o")
+    snap("11_lfo1_wave_page")
+    for k, d in enumerate((3, 2, 10, 2)):
+        turn(KNOB[k], d)
+    snap("11_lfo1_wave_knobs")
     return ev, steps
 
 

@@ -306,13 +306,14 @@ static void pic_echo(void)
     }
 }
 
-/* SETTINGS: ECHO STEREO. PING-PONG: dots bouncing between the L and R walls; STEREO: dots staying on their own side */
+/* SETTINGS: ECHO STEREO, SEM UNISON and LFO RETRIG (lit when ON). PING-PONG: dots bouncing between the L and R walls; STEREO: dots staying on their own side */
 static void pic_settings(void)
 {
     int32_t i, xl = PX + 36, xr = PX + PW - 36, y0 = PY + 28, dy = 12, st = set_ec;
     uint16_t c = PG[PG_SET].bg;
     cv_text(PX + 6, PY + 4, &AF_S, "ECHO", c);
     cv_text(PX + PW - 6 - text_w(&AF_S, "SEM UNISON"), PY + 4, &AF_S, "SEM UNISON", ux_mix(0, c, set_su ? 100 : 30));   /* bright ON, dim OFF */
+    cv_text(PX + PW / 2 - text_w(&AF_S, "LFO RETRIG") / 2, PY + PH - 16, &AF_S, "LFO RETRIG", ux_mix(0, c, set_lr ? 100 : 30));
     cv_text(xl - text_w(&AF_M, "L") / 2, PY + PH - 20, &AF_M, "L", c);
     cv_text(xr - text_w(&AF_M, "R") / 2, PY + PH - 20, &AF_M, "R", c);
     for (i = 0; i < 6; i++) {
