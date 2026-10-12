@@ -336,7 +336,7 @@ static void pic_lfo(void)
     static const int16_t RH[8] = {20000, -26000, 6000, 31000, -12000, -31000, 15000, -6000};
     const int16_t *p = trk[0].p;
     int32_t l2 = ui_page == PG_LFO2, i, amp = p[l2 ? P_L2DP : P_L1DP] * 46 / 127, cy = PY + PH / 2 + 6, x, y;
-    uint32_t sh = (uint32_t)p[l2 ? P_L2SH : P_L1SH], ph = l2 ? lfo2g.ph : lfo1g.ph;
+    uint32_t sh = (uint32_t)p[l2 ? P_L2SH : P_L1SH], ph = (l2 ? lfo2g.ph : lfo1g.ph) & 0xFC000000u;   /* 64 places: a pixel-stable dot for emu_check */
     uint16_t c = PG[ui_page].bg;
     for (i = 0; i < 200; i++) {
         pt[i][0] = (int16_t)(PX + 10 + i);
