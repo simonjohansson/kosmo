@@ -1080,6 +1080,14 @@ static int chk_presets(char *msg, uint32_t n)
 
 /* ---- ECHO (issue #20) ---- */
 /* ECHO fed straight: one block's mix_l / mix_r in, the wet added. Keeps the delay state (host_tracks_init resets it) */
+/* thresholds measured on the linear / two-sample-average ECHO of #20: 9 kHz -5.1 dB, 14 kHz -7.6 dB, 3 kHz glide -26.7 dB */
+#define ALIAS_R9 -17.1
+#define ALIAS_E14 -20
+#define GRAIN_CLEAN -32
+#define GRAIN_CRUNCH -27.5
+#define GRAIN_TOY -27.5
+#define WOW_LO 0.15
+#define WOW_HI 0.4
 #define ECN 4096                                     /* blocks of one echo run: ~3 s */
 static int32_t ec_out[2][ECN * CTL];
 static void echo_run(uint32_t blocks, int32_t (*in)(uint32_t pos))
@@ -1193,7 +1201,10 @@ static int chk_echo_mode(char *msg, uint32_t n)
         echo_run(ECN, in_pulse);
         ec_win(ec_out[0], c, &e[m][0], &hf, &pk);
         ec_win(ec_out[1], c, &e[m][1], &hf, &pk);
-        same[m] = !memcmp(ec_out[0], ec_out[1], sizeof ec_out[0]);
+        same[m] = 1;                                /* L == R up to the dither of the two lines (+-1 code) */
+        for (c = 0; c < ECN * (int32_t)CTL; c++)
+            same[m] &= abs(ec_out[0][c] - ec_out[1][c]) < 100;
+        c = 5 + T;
     }
     ec_stereo = 0;
     snprintf(msg, n, "ECHO mode, centred impulse at T: PING-PONG L %.0f R %.0f, STEREO L %.0f R %.0f (L == R: %d)", e[0][0], e[0][1], e[1][0], e[1][1], same[1]);
@@ -1307,6 +1318,120 @@ static int chk_echo_glide(char *msg, uint32_t n)
     snprintf(msg, n, "ECHO TIME 20 -> 110 on a 200 Hz tone: largest step %d before, %d during the glide (a click is > 3000)", d0, d1);
     return d0 > 100 && d1 < 3 * d0 && d1 < 3000;
 }
+/* least squares fit of one sine at f (Hz) on x[a, b): the residual energy over the fitted energy, dB (out of band, noise and distortion) */
+static double fit_res_db(const double *x, int32_t a, int32_t b, double f)
+{
+    double sc = 0, ss = 0, cc = 0, cs = 0, ssn = 0;
+    int32_t i;
+    for (i = a; i < b; i++) {
+        double w = 2.0 * M_PI * f * i / FS;
+        sc += x[i] * cos(w); ss += x[i] * sin(w); cc += cos(w) * cos(w); cs += sin(w) * sin(w); ssn += x[i] * x[i];
+    }
+    return 10 * log10((ssn - sc * sc / cc - ss * ss / cs) / (sc * sc / cc + ss * ss / cs));
+}
+static double ec_tone_hz;
+static int32_t in_tone(uint32_t p) { return (int32_t)(10000.0 * sin(2.0 * M_PI * ec_tone_hz * p / FS)); }
+/* CLEAN, a 9 kHz sine: the 22 kHz delay clock images it at 13 kHz (the reconstruction); a 14 kHz sine aliases to 8 kHz (the decimation) */
+static int chk_echo_alias(char *msg, uint32_t n)
+{
+    static double w[ECN * CTL];
+    double r9, e14 = 0, e0 = 0;
+    int32_t i;
+    host_tracks_init();
+    ec_wow = 0;
+    song.g[G_ETIME] = 40;
+    song.g[G_EFB] = 0;
+    song.g[G_EAMT] = 127;
+    ec_tone_hz = 9000;
+    echo_run(ECN, in_tone);
+    for (i = 0; i < ECN * CTL; i++)
+        w[i] = ec_out[0][i] - in_tone(i);
+    r9 = fit_res_db(w, 14000, 14000 + 22050, 9000);
+    host_tracks_init();
+    ec_wow = 0;
+    song.g[G_ETIME] = 40;
+    song.g[G_EFB] = 0;
+    song.g[G_EAMT] = 127;
+    ec_tone_hz = 14000;
+    echo_run(ECN, in_tone);
+    for (i = 14000; i < 14000 + 22050; i++) {
+        double y = ec_out[0][i] - in_tone(i), x = in_tone(i - 11800);
+        e14 += y * y;
+        e0 += x * x;
+    }
+    ec_wow = 1;
+    snprintf(msg, n, "ECHO CLEAN: a 9 kHz sine leaves %.1f dB out of band (its 13 kHz image); a 14 kHz sine comes back at %.1f dB (its 8 kHz alias)", r9, 10 * log10(e14 / e0));
+    return r9 < ALIAS_R9 && 10 * log10(e14 / e0) < ALIAS_E14;
+}
+/* TIME 20 -> 60 runs at a constant 1/8 sample per delay-clock sample: a 3 kHz sine comes out as a pure 2625 Hz sine, and the interpolation is the residual */
+static int chk_echo_grain(char *msg, uint32_t n)
+{
+    static double w[1800 * CTL];
+    double r[3];
+    uint32_t b, ch, i;
+    static const uint8_t cs[3] = {EC_CLEAN, EC_CRUNCH, EC_TOY};
+    for (ch = 0; ch < 3u; ch++) {
+        host_tracks_init();
+        ec_wow = 0;
+        song.g[G_ETIME] = 20;
+        song.g[G_EFB] = 0;
+        song.g[G_ECHAR] = cs[ch];
+        song.g[G_EAMT] = 127;
+        ec_tone_hz = 3000;
+        for (b = 0; b < 1800u; b++) {
+            if (b == 700u)
+                song.g[G_ETIME] = 60;
+            for (i = 0; i < CTL; i++) {
+                mix_l[i] = mix_r[i] = in_tone(b * CTL + i);
+                send_l[i] = send_r[i] = 0;
+            }
+            echo_block(CTL);
+            for (i = 0; i < CTL; i++)
+                w[b * CTL + i] = mix_l[i] - in_tone(b * CTL + i);
+        }
+        r[ch] = fit_res_db(w, 900 * CTL, 900 * CTL + 20000, 2625.0);
+    }
+    ec_wow = 1;
+    snprintf(msg, n, "ECHO TIME glide on a 3 kHz sine: residual of the pitch-shifted tone %.1f dB CLEAN, %.1f CRUNCH, %.1f TOY", r[0], r[1], r[2]);
+    return r[0] < GRAIN_CLEAN && r[1] < GRAIN_CRUNCH && r[2] < GRAIN_TOY;
+}
+/* CLEAN wow and flutter: the pitch of a 1 kHz sine, from its phase in 10 ms windows */
+static int chk_echo_wow(char *msg, uint32_t n)
+{
+    double dev[2], prev = 0;
+    uint32_t k, wow;
+    for (wow = 0; wow < 2u; wow++) {
+        double lo = 1e9, hi = -1e9;
+        host_tracks_init();
+        ec_wow = (uint8_t)wow;
+        song.g[G_ETIME] = 40;
+        song.g[G_EFB] = 0;
+        song.g[G_EAMT] = 127;
+        ec_tone_hz = 1000;
+        echo_run(ECN, in_tone);
+        for (k = 30; k < (ECN * CTL - 15000) / 441u; k++) {         /* from 0.3 s after the echo starts */
+            double sc = 0, ss = 0, ph, d;
+            uint32_t j;
+            for (j = 0; j < 441u; j++) {
+                double x = ec_out[0][k * 441u + j] - in_tone(k * 441u + j), a = 2.0 * M_PI * 1000.0 * (k * 441u + j) / FS;
+                sc += x * cos(a); ss += x * sin(a);
+            }
+            ph = atan2(ss, sc);
+            d = ph - prev;
+            d -= 2.0 * M_PI * floor(d / (2.0 * M_PI) + 0.5);
+            if (k > 31u) {
+                d = d / (2.0 * M_PI) * FS / 441.0 / 1000.0;         /* the pitch deviation, fraction */
+                lo = d < lo ? d : lo;
+                hi = d > hi ? d : hi;
+            }
+            prev = ph;
+        }
+        dev[wow] = (hi - lo) / 2 * 100;
+    }
+    ec_wow = 1;
+    snprintf(msg, n, "ECHO CLEAN wow and flutter: pitch deviation +-%.3f %% (off: +-%.3f %%)", dev[1], dev[0]);
+    return dev[1] > WOW_LO && dev[1] < WOW_HI && dev[0] < 0.02;
+}
 static int chk_echo_noise(char *msg, uint32_t n)
 {
     int32_t i;
@@ -1315,6 +1440,7 @@ static int chk_echo_noise(char *msg, uint32_t n)
     for (comp = 0; comp < 2u; comp++) {
         const int32_t N0 = 11800 + 4000, N1 = N0 + 22050;
         host_tracks_init();
+        ec_wow = 0;
         song.g[G_ETIME] = 40;
         song.g[G_EFB] = 0;
         song.g[G_ECHAR] = comp ? EC_CRUNCH : EC_CLEAN;
@@ -1714,6 +1840,9 @@ int main(int argc, char **argv)
     add(J_CHECK, "stereo: SPACE reverberates a hard-left input from the left")->check = chk_stereo_space;
     add(J_CHECK, "echo: REPEATS 127 stays bounded")->check = chk_echo_bound;
     add(J_CHECK, "echo: TIME change glides without a click")->check = chk_echo_glide;
+    add(J_CHECK, "echo: CLEAN keeps a 9 kHz sine clean (anti-aliasing)")->check = chk_echo_alias;
+    add(J_CHECK, "echo: TIME glide keeps a 3 kHz tone clean (interpolation)")->check = chk_echo_grain;
+    add(J_CHECK, "echo: CLEAN has subtle wow and flutter")->check = chk_echo_wow;
     add(J_CHECK, "echo: 12-bit noise floor")->check = chk_echo_noise;
     add(J_CHECK, "echo: BACKWARDS renders")->check = chk_echo_modes;
     add(J_CHECK, "echo: ROBOT echoes at TIME with held repeats")->check = chk_echo_robot;

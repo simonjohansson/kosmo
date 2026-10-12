@@ -19,7 +19,7 @@ S, MS = 10**9, 10**6
 SRAM = 0x01C00000
 HALF_US = 128 * 10**6 // 44100
 LOAD_MAX = {0: 32, 4: 48}           # % (issue #26, stereo end to end: measured 30.9 / 46.5, was 28.1 / 43.4); of a half, 93 ms average with the chord held (measured 28.1 with #25 + #27, 26.6 / 41.4 before; 8-line SPACE, issue #27: it runs always, preset 0 is CLOUD)
-ECHO_MAX = {"CLEAN": 54, "BACKWARDS": 56}   # #26: measured 52.3 / 53.9; FAT 4 with ECHO on (issue #20: AMOUNT 64, REPEATS as at boot; measured 46.9 / 48.8 with the 8-line SPACE CLOUD; 39.8 / 41.4 with the 4-line one)
+ECHO_MAX = {"CLEAN": 59, "BACKWARDS": 56}   # #28: CLEAN measured 57.0 (half-band filters, cubic reads, wow; was 52.3), BACKWARDS 54.7; #26: measured 52.3 / 53.9; FAT 4 with ECHO on (issue #20: AMOUNT 64, REPEATS as at boot; measured 46.9 / 48.8 with the 8-line SPACE CLOUD; 39.8 / 41.4 with the 4-line one)
 WORST_US = HALF_US * 85 // 100      # above this the firmware sheds voices
 STEP_BYTES_MAX = 66_000             # SPI bytes of one DETUNE step on HOME: the bar (58 x 60) and the picture (224 x 122), measured 61.6 K (96 K before)
 BAR_MS_MAX = 15                     # last contact of the detent to the bar on the panel (measured 5.8; 74 ms to the whole redraw before)
@@ -27,7 +27,7 @@ PIC_MS_MAX = 41                     # (#26: 40.1 under the stereo ISR's longer b
 BAR_BYTES = 58 * 60 * 2
 BURST = 12                          # detents 25 ms apart: DETUNE must move BURST * 4
 SPI_BPS = 12_000_000 // 8
-SPACE_MAX = {"CLOUD": 54, "GATED": 61}  # #26: measured 52.3 / 59.0; GATED 54.7 with #25 + #27; FAT 4 + ECHO CLEAN + SPACE on its 2/2 page, AMOUNT up (issue #27: 8 lines, measured 46.9 at the 22 kHz tank, 52.7 at 32 kHz; the 4-line one 39.8; the worst half stays at 1.5 ms of 2.1)
+SPACE_MAX = {"CLOUD": 59, "GATED": 66}  # #28: measured 57.0 / 63.7 with the better CLEAN; #26: measured 52.3 / 59.0; GATED 54.7 with #25 + #27; FAT 4 + ECHO CLEAN + SPACE on its 2/2 page, AMOUNT up (issue #27: 8 lines, measured 46.9 at the 22 kHz tank, 52.7 at 32 kHz; the 4-line one 39.8; the worst half stays at 1.5 ms of 2.1)
 K1, K2, K3, K4 = ("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")   # knobs (tools/emu_check.py)
 CHORD = ("z", "m", "slash")
 

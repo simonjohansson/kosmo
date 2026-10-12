@@ -17,6 +17,7 @@ def main():
     ap.add_argument("--port", default=(glob.glob("/dev/cu.usbmodem*") or [None])[0])
     ap.add_argument("--secs", type=int, default=5)
     ap.add_argument("--space", action="store_true", help="only the ECHO CLEAN + SPACE program sweep (issue #27)")
+    ap.add_argument("--echo", action="store_true", help="only the ECHO off / each character sweep, SPACE off (issue #28)")
     ap.add_argument("--midi", default="Felucca")
     a = ap.parse_args()
     ser = serial.Serial(a.port, 115200, timeout=0.2)
@@ -79,6 +80,14 @@ def main():
         for fat in (0, 4):
             for p in range(6):
                 phase(f"FAT{fat} {names[p]}", lambda: (notes(False), cc(111, p), cc(105, fat), time.sleep(1.5), notes(True)))
+        notes(False)
+        stop = True
+        return
+    if a.echo:                                        # 8 notes, FAT 0, no SPACE: ECHO amount 0, then 64 on each character
+        cc(108, 0); cc(112, 0); cc(110, 0)
+        phase("ECHO off", lambda: (cc(105, 0), notes(True)))
+        for c, name in enumerate(("CLEAN", "CRUNCH", "TOY", "BACKWARDS", "ROBOT")):
+            phase(f"ECHO {name}", lambda: (cc(109, c), cc(110, 64), time.sleep(1.5)))
         notes(False)
         stop = True
         return
