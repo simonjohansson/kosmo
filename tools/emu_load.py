@@ -29,6 +29,8 @@ BURST = 12                          # detents 25 ms apart: DETUNE must move BURS
 SPI_BPS = 12_000_000 // 8
 SPACE_MAX = {"CLOUD": 59, "GATED": 66}  # #28: measured 57.0 / 63.7 with the better CLEAN; #26: measured 52.3 / 59.0; GATED 54.7 with #25 + #27; FAT 4 + ECHO CLEAN + SPACE on its 2/2 page, AMOUNT up (issue #27: 8 lines, measured 46.9 at the 22 kHz tank, 52.7 at 32 kHz; the 4-line one 39.8; the worst half stays at 1.5 ms of 2.1)
 K1, K2, K3, K4 = ("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")   # knobs (tools/emu_check.py)
+ALGO = ("f15", "f16")
+SEM_MAX = {"saws": 33, "pulses + sync": 36}   # % (issue #33: the SEM engine, chord on HOME; measured 32.0 / 34.8, WAVE 30.5)
 CHORD = ("z", "m", "slash")
 
 
@@ -44,10 +46,17 @@ def detents(ev, t, knob, n, gap=120):
     return t
 
 
-def run(fw, fat, chord, steps, gap=120, echo=None, space=None):
+def run(fw, fat, chord, steps, gap=120, echo=None, space=None, sem=0):
     ev = []
     t = detents(ev, 19 * S, K3[::-1], 4)            # FAT is 2 after boot: down to 0 ...
     detents(ev, t, K3, fat)                          # ... then up
+    if sem:                                          # ALGORITHM to SEM; sem 2: both oscillators PULSE (K1, K3), then HOME's 2/2 and SYNC (K3)
+        detents(ev, 19500 * MS, ALGO, 1)
+        if sem == 2:
+            detents(ev, 19620 * MS, K1, 1, 120)
+            detents(ev, 19740 * MS, K3, 1, 120)
+            ev += [(19860 * MS, "h", 1), (19900 * MS, "h", 0)]
+            detents(ev, 19960 * MS, K3, 1, 120)
     if echo is not None:                             # ECHO: the FX button, AMOUNT 0 -> 64, CHARACTER echo steps (CLEAN 0, BACKWARDS 3)
         ev += [(19950 * MS, "f1", 1), (20000 * MS, "f1", 0)]
         t = detents(ev, 20100 * MS, K4, 16)
@@ -92,6 +101,12 @@ def main():
         if r["load"] > LOAD_MAX[fat]: bad.append(f"FAT {fat}: load {r['load']:.1f}% > {LOAD_MAX[fat]}%")
         if r["max_us"] > WORST_US: bad.append(f"FAT {fat}: worst half {r['max_us']} us > {WORST_US}")
         if r["late"]: bad.append(f"FAT {fat}: {r['late']} late halves (underrun)")
+    for name, sm in (("saws", 1), ("pulses + sync", 2)):
+        r = run(fw, 0, CHORD, 0, sem=sm)
+        print(f"chord, SEM {name}: load {r['load']:.1f}% (max {SEM_MAX[name]}), worst half {r['max_us']} us (max {WORST_US}), late {r['late']}")
+        if r["load"] > SEM_MAX[name]: bad.append(f"SEM {name}: load {r['load']:.1f}% > {SEM_MAX[name]}%")
+        if r["max_us"] > WORST_US: bad.append(f"SEM {name}: worst half {r['max_us']} us > {WORST_US}")
+        if r["late"]: bad.append(f"SEM {name}: {r['late']} late halves (underrun)")
     for name, ch in (("CLEAN", 0), ("BACKWARDS", 3)):
         r = run(fw, 4, CHORD, 0, echo=ch)
         print(f"chord, FAT 4, ECHO {name}: load {r['load']:.1f}% (max {ECHO_MAX[name]}), worst half {r['max_us']} us (max {WORST_US}), late {r['late']}")

@@ -155,10 +155,10 @@ static void midi_pkt(uint32_t st, uint32_t d1, uint32_t d2)   /* as usb.c: the q
 }
 
 /* ------------------------------------------------------------- jobs --- */
-enum { J_SOUND, J_WAVE, J_FILTER, J_MODE, J_REVERB, J_ECHO, J_KEYS, J_MIDI, J_CPU, J_CHECK };
+enum { J_SOUND, J_WAVE, J_FILTER, J_MODE, J_REVERB, J_ECHO, J_KEYS, J_MIDI, J_CPU, J_SEM, J_CHECK };
 typedef struct {
     char name[64];
-    uint8_t kind, pi, arg, cpu_notes, own, echo;     /* own: J_CPU is a sound (its cost less the idle mix's), not a mix */
+    uint8_t kind, pi, arg, cpu_notes, own, echo, sem;     /* own: J_CPU is a sound (its cost less the idle mix's), not a mix */
     int (*check)(char *msg, uint32_t n);       /* J_CHECK */
     res_t r;
     int crashed;
@@ -175,6 +175,27 @@ static void job_wave(const job_t *j)            /* arg: WAVE 0..NWAVES-1 on the 
 {
     host_tracks_init();
     trk[0].p[P_E0] = j->arg;
+    phrase(&trk[0], 60);
+}
+
+/* SEM sounds (P_S0..P_S7: wave1 pw1 wave2 pw2 tune fine sync mix), the SEM engine on the default sound's envelope and filter */
+static const int16_t SEM_SOUNDS[5][8] = {
+    {0, 63, 0, 63, 24, 62, 0, 64},                  /* two saws, VCO2 12 ct up */
+    {1, 17, 1, 91, 36, 50, 0, 64},                  /* two pulses, an octave apart */
+    {0, 63, 0, 63, 31, 50, 1, 90},                  /* synced saw, a fifth up */
+    {1, 40, 0, 63, 33, 50, 1, 100},                 /* pulse, synced saw */
+    {1, 17, 1, 91, 31, 50, 1, 64},                  /* two pulses synced: the dearest */
+};
+static void sem_select(uint32_t i)
+{
+    host_tracks_init();
+    memcpy(&trk[0].p[P_S0], SEM_SOUNDS[i], sizeof SEM_SOUNDS[i]);
+    trk[0].p[P_ENG] = 1;
+    trk[0].eng = 1;                                 /* (the engine takes over at the next block, with no voice yet) */
+}
+static void job_sem(const job_t *j)             /* arg: SEM_SOUNDS */
+{
+    sem_select(j->arg);
     phrase(&trk[0], 60);
 }
 
@@ -293,6 +314,12 @@ static void job_cpu(const job_t *j)
     uint64_t i0 = 0, t0 = 0;
     host_tracks_init();
     host_sound(&trk[0], j->pi);
+    if (j->sem) {                                   /* the SEM engine with sound sem - 1, the part's envelope and filter */
+        int16_t e[4];
+        memcpy(e, &trk[0].p[P_E0], sizeof e);
+        sem_select(j->sem - 1u);
+        memcpy(&trk[0].p[P_E0], e, sizeof e);
+    }
     trk[0].p[P_VOICE] = V_POLY;
     trk[0].p[P_SUS] = 127;
     trk[0].p[P_FTYPE] = j->arg & 7u;
@@ -345,6 +372,9 @@ static int run_job_body(job_t *j)
         break;
     case J_CPU:
         job_cpu(j);
+        break;
+    case J_SEM:
+        job_sem(j);
         break;
     case J_CHECK:
         R.ok = (uint32_t)j->check(R.msg, sizeof R.msg);
@@ -605,13 +635,11 @@ static int chk_scan_ramp(char *msg, uint32_t n)
 /* aliasing of the oscillator alone: a table frame played at C5 / C6 / C7 (k = 49 / 97 / 194 cycles in a 4096-sample DFT, so the harmonics
  * sit on bins that are multiples of k), as the mip level of wave_level against the full table.
  * Reports the energy at non-harmonic bins relative to the whole signal, in dB; the gain is mip against full. */
-static double alias_db(uint32_t table, int32_t scan, uint32_t k, uint32_t lv)
+static double alias_x(const double *x, uint32_t k)
 {
     enum { L = 4096 };
-    static double x[L], re[L / 2 + 1], im[L / 2 + 1], cs[L], sn[L], hn[L];
-    const int16_t *a, *b, *tab;
-    int32_t w;
-    uint32_t i, j, ph = 0, inc = k << 20;
+    static double re[L / 2 + 1], im[L / 2 + 1], cs[L], sn[L], hn[L];
+    uint32_t i, j;
     double tot = 0, al = 0;
     if (!cs[1])
         for (i = 0; i < L; i++) {
@@ -619,11 +647,6 @@ static double alias_db(uint32_t table, int32_t scan, uint32_t k, uint32_t lv)
             hn[i] = 0.5 - 0.5 * cos(2 * M_PI * i / L);
             sn[i] = sin(2 * M_PI * i / L);
         }
-    wave_frames(lv, table, scan << 8, &a, &b, &w);
-    wb_key[lv].a = 0;                                          /* rebuilt for this frame pair */
-    tab = wave_blend(lv, a, b, w);
-    for (i = 0; i < L; i++, ph += inc)
-        x[i] = blend_read(tab, ph) / 32768.0;
     for (j = 1; j <= L / 2; j++) {                             /* a direct DFT with a Hann window: 2048 bins x 4096 points */
         double r = 0, m = 0;
         for (i = 0; i < L; i++) {
@@ -641,6 +664,21 @@ static double alias_db(uint32_t table, int32_t scan, uint32_t k, uint32_t lv)
         al += (d > 2 && d < k - 2) ? e : 0;
     }
     return 10 * log10(al / tot + 1e-12);
+}
+
+static double alias_db(uint32_t table, int32_t scan, uint32_t k, uint32_t lv)
+{
+    enum { L = 4096 };
+    static double x[L];
+    const int16_t *a, *b, *tab;
+    int32_t w;
+    uint32_t i, ph = 0, inc = k << 20;
+    wave_frames(lv, table, scan << 8, &a, &b, &w);
+    wb_key[lv].a = 0;                                          /* rebuilt for this frame pair */
+    tab = wave_blend(lv, a, b, w);
+    for (i = 0; i < L; i++, ph += inc)
+        x[i] = blend_read(tab, ph) / 32768.0;
+    return alias_x(x, k);
 }
 
 static int chk_alias(char *msg, uint32_t n)
@@ -721,6 +759,225 @@ static int chk_mip_switch(char *msg, uint32_t n)
         }
     snprintf(msg, n, "level 0 -> 1 on ALIEN and GHOST, 240 switches: the first 4 samples carry at most %.2f of the block's difference (limit 0.5)", worst);
     return worst <= 0.5;
+}
+
+/* ---- SEM (issue #33) ---- */
+/* the oscillators alone (sem_osc, before the filter): L samples of the part's P_S0..P_S7 = ps at the phase increment inc1 and
+ * pitch16, a warm-up block first (the output is one sample late) */
+static void sem_run(const int16_t *ps, uint32_t inc1, int32_t pitch16, double *x, uint32_t L)
+{
+    track_t *t = &trk[0];
+    voice_t v;
+    vmod_t m = {0};
+    uint32_t i, j;
+    memset(&v, 0, sizeof v);
+    memcpy(&t->p[P_S0], ps, 8 * sizeof *ps);
+    m.inc = inc1;
+    m.pitch16 = pitch16;
+    sem_osc(t->p, &v, CTL, &m);
+    for (i = 0; i < L; i += CTL) {
+        sem_osc(t->p, &v, CTL, &m);
+        for (j = 0; j < CTL && i + j < L; j++)
+            x[i + j] = xbuf[j] / 32768.0;
+    }
+}
+/* S0..S7: wave1 pw1 wave2 pw2 tune fine sync mix */
+static const int16_t SEM_DEF[8] = {0, 63, 0, 63, 24, 50, 0, 64};
+
+/* VCO1 and VCO2 pitch: VCO1's cycles in one second against its increment; VCO2 against VCO1 (TUNE / FINE) read off the phase increments */
+static int chk_sem_pitch(char *msg, uint32_t n)
+{
+    static const uint8_t NT[3] = {36, 60, 84};
+    static const int16_t TU[5] = {0, 12, 24, 31, 48}, FI[3] = {0, 50, 100};
+    static double x[FS];
+    double worst = 0, e1 = 0;
+    uint32_t a, b, c, i, edges = 0;
+    int16_t ps[8];
+    track_t *t = &trk[0];
+    host_tracks_init();
+    memcpy(ps, SEM_DEF, sizeof ps);
+    ps[7] = 0;                                                     /* VCO1 alone */
+    sem_run(ps, pitch_inc(69 * 16), 69 * 16, x, FS);
+    for (i = 1; i < FS; i++)
+        edges += x[i - 1] > 0 && x[i] <= 0;                        /* a saw's reset */
+    e1 = fabs((double)edges - (double)pitch_inc(69 * 16) * (double)FS / 4294967296.0);
+    for (a = 0; a < 3u; a++)
+        for (b = 0; b < 5u; b++)
+            for (c = 0; c < 3u; c++) {
+                voice_t v;
+                vmod_t m = {0};
+                double want, got, cents;
+                memset(&v, 0, sizeof v);
+                memcpy(ps, SEM_DEF, sizeof ps);
+                ps[4] = TU[b];
+                ps[5] = FI[c];
+                memcpy(&t->p[P_S0], ps, sizeof ps);
+                m.pitch16 = NT[a] * 16;
+                m.inc = pitch_inc((uint32_t)m.pitch16);
+                sem_osc(t->p, &v, 1, &m);
+                got = (double)v.ph[2] / (double)m.inc;
+                want = pow(2.0, ((TU[b] - 24) * 100.0 + FI[c] - 50) / 1200.0);
+                cents = fabs(1200.0 * log2(got / want));
+                worst = cents > worst ? cents : worst;
+            }
+    snprintf(msg, n, "VCO1 %.0f cycles of %.0f in 1 s (limit 1); VCO2 TUNE +-2 octaves and FINE +-50 ct at 3 notes: worst %.2f cents off (limit 1)",
+             (double)edges, (double)pitch_inc(69 * 16) * (double)FS / 4294967296.0, worst);
+    (void)e1;
+    return e1 <= 1.0 && worst <= 1.0;
+}
+
+/* PW 0 .. 126 sets the duty of a PULSE, 5 .. 95 % */
+static int chk_sem_pw(char *msg, uint32_t n)
+{
+    static const int16_t PW[5] = {0, 31, 63, 95, 126};
+    static double x[FS / 2];
+    double worst = 0;
+    uint32_t k, i, len = 0;
+    int16_t ps[8];
+    host_tracks_init();
+    msg[0] = 0;
+    for (k = 0; k < 5u; k++) {
+        double hi = 0, want = (5.0 + 90.0 * PW[k] / 126.0) / 100.0, d;
+        memcpy(ps, SEM_DEF, sizeof ps);
+        ps[0] = 1;
+        ps[1] = PW[k];
+        ps[7] = 0;
+        sem_run(ps, pitch_inc(60 * 16), 60 * 16, x, FS / 2);
+        for (i = 0; i < FS / 2u; i++)
+            hi += x[i] > (1 - 2 * want) * 0.5;                    /* above the middle of its two levels (1 - f, -f) */
+        d = hi / (FS / 2u);
+        worst = fabs(d - want) > worst ? fabs(d - want) : worst;
+        len += (uint32_t)snprintf(msg + len, n - len, "PW %d: %.1f %% (want %.1f); ", PW[k], 100 * d, 100 * want);
+    }
+    snprintf(msg + len, n - len, "limit 0.5 points off");
+    return worst <= 0.005;
+}
+
+/* aliasing of the oscillators alone at C5 C6 C7, as chk_alias for WAVE (energy at non-harmonic bins; WAVE's own limit: under -30 dB):
+ * SAW, PULSE (a quarter and a half), and SYNC (VCO2 alone, a fifth up and an octave up, SAW and PULSE: periodic at VCO1's pitch, so every
+ * non-harmonic bin is aliasing or a wrong reset). Without SYNC the same VCO2 is not periodic at VCO1's pitch (the control). */
+static int chk_sem_alias(char *msg, uint32_t n)
+{
+    static const uint32_t K[3] = {49, 97, 194};
+    static const char *const NM[3] = {"C5", "C6", "C7"};
+    static const struct { const char *nm; int16_t w1, pw1, w2, pw2, tune, sync, mix; } C[] = {
+        {"saw", 0, 63, 0, 63, 24, 0, 0}, {"pulse 25%", 1, 28, 0, 63, 24, 0, 0}, {"square", 1, 63, 0, 63, 24, 0, 0},
+        {"sync saw +7", 0, 63, 0, 63, 31, 1, 128}, {"sync saw +12", 0, 63, 0, 63, 36, 1, 128},
+        {"sync pulse +7", 0, 63, 1, 28, 31, 1, 128}, {"sync pulse +12", 0, 63, 1, 63, 36, 1, 128},
+    };
+    static double x[4096];
+    double worst[3] = {-999, -999, -999}, free_ = 0, w6 = -999;
+    uint32_t c, k, len = 0, bad = 0;
+    host_tracks_init();
+    msg[0] = 0;
+    for (c = 0; c < NELEM(C); c++)
+        for (k = 0; k < 3u; k++) {
+            int16_t ps[8] = {C[c].w1, C[c].pw1, C[c].w2, C[c].pw2, C[c].tune, 50, C[c].sync, C[c].mix};
+            double db;
+            sem_run(ps, K[k] << 20, (72 + 12 * (int32_t)k) * 16, x, 4096);
+            db = alias_x(x, K[k]);
+            worst[k] = db > worst[k] ? db : worst[k];
+            if (k == 1u && db > w6)
+                w6 = db;
+            bad += db > -30;
+        }
+    {   /* the control */
+        int16_t ps[8] = {0, 63, 0, 63, 31, 50, 0, 128};
+        sem_run(ps, K[1] << 20, 84 * 16, x, 4096);
+        free_ = alias_x(x, K[1]);
+    }
+    for (k = 0; k < 3u; k++)
+        len += (uint32_t)snprintf(msg + len, n - len, "%s worst %.1f dB; ", NM[k], worst[k]);
+    snprintf(msg + len, n - len, "(%u cases of %u over -30 dB, WAVE's limit; WAVE's worst at C6 is -32, needs -35 here); VCO2 free-running a fifth up: %.1f dB",
+             bad, (uint32_t)(NELEM(C) * 3u), free_);
+    return !bad && free_ > -10 && w6 <= -35;
+}
+
+/* SYNC locks VCO2 to VCO1: a tuned VCO2 is periodic at VCO1's period (non-harmonic energy gone), and the reset is a BLEP, not a step
+ * (the biggest jump at the reset is well under the naive step) */
+static int chk_sem_sync(char *msg, uint32_t n)
+{
+    static double x[4096];
+    int16_t ps[8] = {0, 63, 0, 63, 33, 50, 1, 128};
+    double on, off, jump = 0;
+    uint32_t i;
+    host_tracks_init();
+    sem_run(ps, 97u << 20, 84 * 16, x, 4096);
+    on = alias_x(x, 97);
+    for (i = 1; i < 4096u; i++)
+        jump = fabs(x[i] - x[i - 1]) > jump ? fabs(x[i] - x[i - 1]) : jump;
+    ps[6] = 0;
+    sem_run(ps, 97u << 20, 84 * 16, x, 4096);
+    off = alias_x(x, 97);
+    snprintf(msg, n, "VCO2 +9 st alone: SYNC on %.1f dB, off %.1f dB non-harmonic (VCO1 = 97 cycles / 4096); biggest step %.2f of 2 (the reset, band-limited)",
+             on, off, jump);
+    return on < -35 && off > -10 && jump < 1.2;
+}
+
+/* ALGORITHM turned on held notes (POLY and LEGATO): the sounding voices fade out in a block with no step beyond the sound's own, none is
+ * left sounding or held, the next note plays the new engine; each engine keeps its parameters over the trips */
+static int chk_sem_switch(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t mode, k, bad = 0, len = 0;
+    msg[0] = 0;
+    for (mode = 0; mode < 2u; mode++) {
+        int32_t ref = 0, sw = 0, peak = 0;
+        uint32_t busy, i;
+        int16_t sem_before[8], wave_before[4];
+        host_tracks_init();
+        t->p[P_VOICE] = mode ? V_LEGATO : V_POLY;
+        t->p[P_REV] = 0;
+        t->p[P_E2] = 127;
+        t->p[P_E4] = 2;
+        t->p[P_S4] = 31;
+        t->p[P_S6] = 1;
+        t->p[P_S1] = 40;
+        memcpy(sem_before, &t->p[P_S0], sizeof sem_before);
+        memcpy(wave_before, &t->p[P_E0], sizeof wave_before);
+        fpos = 0;
+        trk_note_on(t, 60, 100);
+        trk_note_on(t, 64, 100);
+        run_to(at(0.3));
+        for (i = 0; i < 2u * CTL; i += 2) {                                       /* the last block of steady WAVE: its own steps */
+            int32_t d = abs(last_out[i] - (i ? last_out[i - 2] : 0));
+            ref = i && d > ref ? d : ref;
+        }
+        t->p[P_ENG] = 1;                                                           /* ALGORITHM */
+        for (k = 0; k < 4u; k++) {
+            blk();
+            for (i = 2; i < 2u * CTL; i += 2) {
+                int32_t d = abs(last_out[i] - last_out[i - 2]);
+                sw = d > sw ? d : sw;
+            }
+        }
+        busy = voices_busy();
+        trk_note_off(t, 60);                                                      /* the keys are still down: their release finds nothing */
+        trk_note_off(t, 64);
+        run_to(fpos + FS / 10u);
+        busy += !parts_free();
+        trk_note_on(t, 67, 100);                                                  /* the new engine */
+        run_to(fpos + FS / 4u);
+        for (i = 0; i < 2u * CTL; i++)
+            peak = abs(last_out[i]) > peak ? abs(last_out[i]) : peak;
+        busy += t->eng != 1u;
+        trk_note_off(t, 67);
+        t->p[P_ENG] = 0;                                                          /* and back */
+        run_to(fpos + FS / 5u);
+        busy += t->eng != 0u || !parts_free();
+        trk_note_on(t, 60, 100);
+        run_to(fpos + FS / 4u);
+        busy += voices_busy() == 0;
+        trk_note_off(t, 60);
+        run_to(fpos + 3u * FS);
+        busy += !parts_free();
+        busy += memcmp(sem_before, &t->p[P_S0], sizeof sem_before) != 0 || memcmp(wave_before, &t->p[P_E0], sizeof wave_before) != 0;
+        len += (uint32_t)snprintf(msg + len, n - len, "%s: biggest step at the switch %d against %d in the sound (limit 2x + 600), %u problems; ",
+                                  mode ? "LEGATO" : "POLY", sw, ref, busy);
+        bad += busy || sw > 2 * ref + 600 || !peak;
+    }
+    snprintf(msg + len, n - len, "0 stuck voices, both parameter sets kept");
+    return !bad;
 }
 
 /* one detent (SCAN 40 -> 44) on a held note: the voice's SCAN moves monotonically, takes 40 ms or more to cover 90 % of
@@ -1916,6 +2173,13 @@ int main(int argc, char **argv)
         snprintf(name, sizeof name, "echo/ROBOT_LEAD/%s", EN[k0]);
         add(J_ECHO, name)->arg = (uint8_t)k0;
     }
+    {
+        static const char *const SN[5] = {"saw_detune", "pulses", "sync_saw", "pulse_sync_saw", "pulses_sync"};
+        for (i = 0; i < 5u; i++) {
+            snprintf(name, sizeof name, "sem/%s", SN[i]);
+            add(J_SEM, name)->arg = (uint8_t)i;
+        }
+    }
     add(J_MODE, "mode/ROBOT_LEAD/FAT4")->arg = 4u << 2;      /* POLY, FAT 4 */
     add(J_KEYS, "keys/octave");
     add(J_MIDI, "midi/notes_bend_sustain");
@@ -1939,6 +2203,11 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: SCAN ignores the envelope")->check = chk_scan_env;
     add(J_CHECK, "wave: band-limited tables, aliasing at C5 C6 C7")->check = chk_alias;
     add(J_CHECK, "wave: no click at a mip level switch")->check = chk_mip_switch;
+    add(J_CHECK, "sem: VCO1, VCO2 pitch, TUNE and FINE")->check = chk_sem_pitch;
+    add(J_CHECK, "sem: PW sets the duty")->check = chk_sem_pw;
+    add(J_CHECK, "sem: band-limited, aliasing at C5 C6 C7")->check = chk_sem_alias;
+    add(J_CHECK, "sem: SYNC locks VCO2 to VCO1")->check = chk_sem_sync;
+    add(J_CHECK, "sem: ALGORITHM switch on held notes, parameters kept")->check = chk_sem_switch;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;
@@ -2001,6 +2270,12 @@ int main(int argc, char **argv)
         snprintf(name, sizeof name, "cpu/echo/%s", EN[i ? 3 : 0]);
         j = add(J_CPU, name);
         j->echo = (uint8_t)(i ? 4 : 1);
+        j->cpu_notes = 8;
+        j->own = 1;
+    }
+    for (i = 0; i < 2u; i++) {                         /* SEM: two saws, and two pulses synced (the dearest), 8 notes through the same filter */
+        job_t *j = add(J_CPU, i ? "cpu/sem/pulses_sync" : "cpu/sem/saws");
+        j->sem = (uint8_t)(i ? 5 : 1);
         j->cpu_notes = 8;
         j->own = 1;
     }

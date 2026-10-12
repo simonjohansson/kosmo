@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """One headless fm1-emulator run of build/kosmo.bin: boot, visit each page, turn its knobs, turn PRESETS,
-play a note, snapshot the LCD after each step and compare with tests/emu_ref/*.png.
+play a note, turn ALGORITHM to SEM and visit its two HOME pages, snapshot the LCD after each step and compare with tests/emu_ref/*.png.
 
     tools/emu_check.py [--update] [FIRMWARE]     (FM1_EMULATOR: emulator binary, default ~/src/fm1-emulator/emulator)
 
@@ -19,7 +19,7 @@ S, MS = 10**9, 10**6
 # qcodes from fm1-emulator src/include/ui/fm1-controls.h: pages, K1..K4 (A, B phases), PRESETS, piano C
 PAGE = [("HOME", "h"), ("EDIT", "f5"), ("ENV", "p"), ("ECHO", "f1"), ("SPACE", "f1")]   # FX pressed twice: ECHO, then SPACE (ui.c)
 KNOB = [("f17", "f18"), ("d", "f"), ("f19", "f20"), ("f21", "f22")]
-PRESETS, NOTE = ("f13", "f14"), "z"
+PRESETS, ALGO, NOTE = ("f13", "f14"), ("f15", "f16"), "z"
 # page -> how many knobs it uses (ui.c PG[])
 USES = {"HOME": 4, "EDIT": 3, "ENV": 4, "ECHO": 4, "SPACE": 4}
 
@@ -67,6 +67,19 @@ def script():
     snap("09_settings_page")
     turn(KNOB[0], 1)
     snap("09_settings_knobs")
+    turn(ALGO, 1)                                           # ALGORITHM: the engine banner (SEM), then HOME is SEM's 1/2 and 2/2
+    snap("10_sem_banner")
+    t += 1200 * MS
+    press("h")
+    snap("10_sem_page1")
+    for k in range(4):
+        turn(KNOB[k])
+    snap("10_sem_page1_knobs")
+    press("h")
+    snap("10_sem_page2")
+    for k in range(4):
+        turn(KNOB[k])
+    snap("10_sem_page2_knobs")
     return ev, steps
 
 

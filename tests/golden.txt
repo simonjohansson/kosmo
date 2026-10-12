@@ -66,6 +66,11 @@ echo/ROBOT_LEAD/CRUNCH 90cfd5887d677f1d
 echo/ROBOT_LEAD/TOY b8ee862b79dff2e7
 echo/ROBOT_LEAD/BACKWARDS aa08d0b7a9282db0
 echo/ROBOT_LEAD/ROBOT 441f02336d55ba87
+sem/saw_detune 1e09f3a452b87881
+sem/pulses 3c760715b09c37a9
+sem/sync_saw 680c3910da32cc5b
+sem/pulse_sync_saw ca8322576ac6dd78
+sem/pulses_sync eec2d69992c38246
 mode/ROBOT_LEAD/FAT4 739483824b89238d
 keys/octave 07bb6514bb512c08
 midi/notes_bend_sustain 1c2446f4a5474ad6

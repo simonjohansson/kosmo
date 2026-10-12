@@ -13,4 +13,6 @@ cpu/filter/COMB 876
 cpu/fat4 1100
 cpu/echo/CLEAN 1346
 cpu/echo/BACKWARDS 1331
+cpu/sem/saws 1306
+cpu/sem/pulses_sync 1355
 cpu/mix/idle 397

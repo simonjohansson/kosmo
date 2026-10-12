@@ -2,6 +2,7 @@
 # function in build/kosmo.dis, x4 per nesting level, divides x9. The check allows +10 %.
 # Rewritten by BUDGET_UPDATE=1.
 wave_render 625
+sem_render 3587
 fm1_alnk0_irq 2088
 fm1_timer5_irq 23968
 space_block 778
