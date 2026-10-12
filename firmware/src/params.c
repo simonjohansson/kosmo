@@ -23,6 +23,15 @@ static const param_desc_t TP[P_COUNT] = {
     [P_MUTE] = PD("MUTE", F_ENUM, 0, 1, 0),
     [P_E4] = PD("FAT", F_INT, 0, 4, 0),          /* WAVE: extra unison copies per note */
     [P_FTYPE] = PD("TYPE", F_ENUM, 0, 4, 0),       /* LP BP HP NOTCH COMB */
+    [P_L1SH] = PD("SHAPE", F_ENUM, 0, 4, 0),       /* SINE TRI SAW SQUARE RANDOM */
+    [P_L1RT] = PD("RATE", F_PCT, 0, 127, 64),
+    [P_L1DP] = PD("DEPTH", F_PCT, 0, 127, 0),      /* 0 = off */
+    [P_L1TW] = PD("TARGET", F_ENUM, 0, 3, 0),      /* WAVE: SCAN PITCH CUTOFF VOLUME */
+    [P_L1TS] = PD("TARGET", F_ENUM, 0, 4, 0),      /* SEM: PW TUNE 2 PITCH CUTOFF MIX */
+    [P_L2SH] = PD("SHAPE", F_ENUM, 0, 4, 0),
+    [P_L2RT] = PD("RATE", F_PCT, 0, 127, 64),
+    [P_L2DP] = PD("DEPTH", F_PCT, 0, 127, 0),
+    [P_L2T] = PD("TARGET", F_ENUM, 0, 5, 0),       /* ECHO TIME REPEATS AMOUNT, SPACE SIZE TONE AMOUNT */
 };
 
 static const param_desc_t GP[G_COUNT] = {

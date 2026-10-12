@@ -121,7 +121,7 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     sc += ((p[P_E2] << 8) - sc) >> 2;
     sr += ((p[P_E3] << 8) - sr) >> 2;
     ss += ((p[P_E1] << 16) - ss) >> 6;                /* a one-pole of 64 blocks (tau 43 ms): a detent is a sweep */
-    int32_t scan = clamp(ss >> 8, 0, 127 << 8);
+    int32_t scan = clamp((ss >> 8) + (m->lk == LK_SCAN ? lfo_delta(m->lm, 127 << 8) : 0), 0, 127 << 8);   /* LFO 1 */
     const int16_t *tab;
     wave_frames(lv, p[P_E0], scan, &fa, &fb, &w);
     tab = wave_blend(lv, fa, fb, w);
@@ -152,9 +152,13 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     v->s[6] = ss;
 }
 
+static const ltgt_t LT_WAVE[4] = {{LK_SCAN, "Scan", "SCAN"}, {LK_PITCH, "Pitch", "PITCH"}, {LK_CUT, "Cutoff", "CUTOFF"}, {LK_VOL, "Volume", "VOLUME"}};
 static const engine_t ENG_WAVE = {
     .name = "WAVE",
     .pbase = P_E0,
+    .lt = LT_WAVE,
+    .nlt = 4,
+    .ltp = P_L1TW,
     .edit = {
         {"WAVE", F_ENUM, 0, NWAVES - 1, 0, WAVE_NAMES, 0},
         {"SCAN", F_PCT, 0, 127, 0, 0, 0},

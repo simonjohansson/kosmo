@@ -209,6 +209,7 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
     v->active = 1;
     v->stage = 1;
     v->age = ++vage;
+    lfo_start(&v->lfo, vage);                           /* LFO RETRIG: phase 0 at the note-on */
     v->pitch16 = (int32_t)note * 16;
     glide_set(t, v, glide);
     if (!sounding) {                                    /* sounding: the attack starts from the current level */
@@ -520,7 +521,8 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     /* TUNE in cents: whole 1/16 semitones in the pitch, the rest as a fine factor (no dead zone) */
     int32_t tune = song.g[G_TUNE] >= 0 ? song.g[G_TUNE] * 16 / 100 : -((-song.g[G_TUNE] * 16 + 99) / 100);
     int32_t tune_fine = (song.g[G_TUNE] * 16 - tune * 100) * 2367 / 16000;   /* rest, in 1/4096 (1 ct = 2.367) */
-    int32_t bend, bend16, bend_fine;
+    int32_t bend, bend16, bend_fine, dp, lms, lk;
+    uint32_t linc;
     {
         int32_t d = midi_bend_target[0] - midi_bend_q8[0];
         /* ~6 ms smoothing, with an exact landing (no permanent small offset). */
@@ -542,16 +544,23 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     for (i = 0; i < 3u * n; i++)
         out[i] = 0;
     tr_side = 0;
+    dp = p[P_L1DP];
+    lms = lfo_depth(lfo_tick(&lfo1g, (uint32_t)p[P_L1SH], linc = lfo_inc(p[P_L1RT])), dp);   /* LFO 1: the shared one (free-running) */
+    lk = dp ? e->lt[clamp(p[e->ltp], 0, e->nlt - 1)].kind : LK_NONE;
     for (i = 0; i < NVOICE; i++) {
         voice_t *v = &t->v[i];
         vmod_t m;
-        int32_t env, pitch;
+        int32_t env, pitch, lm = 0, lf = 0;
         if (!v->active)
             continue;
         v->fine = t->eng ? 0 : v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
         env = env_tick(t, v);
+        if (dp)                                         /* LFO 1: the shared one, or this voice's own (LFO RETRIG) */
+            lm = lfo_retrig ? lfo_depth(lfo_tick(&v->lfo, (uint32_t)p[P_L1SH], linc), dp) : lms;
         m.envq15 = env;
         m.amp1 = mulq15(env, v->vel * 258);
+        if (lk == LK_VOL)                               /* tremolo: from the knob's level down to 1 - DEPTH, never above */
+            m.amp1 = mulq15(m.amp1, 32768 - (dp << 7) + (lm >> 1));
         m.amp0 = v->env_out;
         v->env_out = m.amp1;
         if (v->pitch_cur != v->pitch16) {               /* glide */
@@ -564,12 +573,18 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         if (!env && !m.amp0 && v->stage == 2)
             continue;                                   /* held at a silent sustain (SUS 0): nothing to render */
         pitch = v->pitch_cur + tune + bend16 + ((m.envq15 * p[P_ED_PIT] * 3) >> 15);
+        if (lk == LK_PITCH)                             /* +-1200 cents at full DEPTH */
+            pitch += cents_split(lfo_delta(lm, 1200), &lf);
         m.pitch16 = clamp(pitch, 0, 2047);
         m.inc = pitch_inc(m.pitch16);
-        m.fine = v->fine + tune_fine + bend_fine;
+        m.fine = v->fine + tune_fine + bend_fine + lf;
         if (m.fine)                                      /* residual below 1/16 semitone */
             m.inc += (uint32_t)((int32_t)(m.inc >> 12) * m.fine);
         m.cutoff = (m.envq15 * p[P_ED_FLT]) >> 7;
+        if (lk == LK_CUT)
+            m.cutoff += lfo_delta(lm, 127 << 8);
+        m.lm = lm;                                      /* the engine's own targets (SCAN, PW, TUNE 2, MIX) read these */
+        m.lk = (uint8_t)lk;
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         tr_side |= v->fk ? 1u : 0u;

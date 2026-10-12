@@ -2,7 +2,7 @@
 /* SEM: the oscillator section of an Oberheim SEM. Two band-limited (polyBLEP) oscillators per voice, each a SAW or a PULSE with
  * its own width (5 .. 95 %, 50 % = square); VCO2 is tuned against VCO1 (TUNE in semitones, FINE in cents) and can be hard-synced
  * to it (the reset is band-limited with a BLEP too); MIX crossfades them. Then the same filter, envelope and chain as WAVE
- * (FILTER_BLOCK, dsp.c). No FAT / DETUNE, no modulation (issue #33).
+ * (FILTER_BLOCK, dsp.c). No FAT / DETUNE. LFO 1 (lfo.c) moves PW, VCO2 TUNE or MIX here, or the pitch or cutoff (voice.c).
  * Parameters P_S0..P_S7: VCO1 wave, VCO1 PW, VCO2 wave, VCO2 PW, TUNE (24 = 0, +-24 semitones), FINE (50 = 0, +-50 cents), SYNC, MIX.
  * Slots: ph[0] VCO1, ph[2] VCO2, s[6] s[8] s[9] the oscillators' last samples and a pending BLEP term, as WAVE for the rest. */
 #define SEM_PW_MAX 126
@@ -56,9 +56,9 @@ _Static_assert(CTL <= HALF_FRAMES, "sem_osc: the block fits xbuf");
 __attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m, uint32_t pw1, uint32_t pw2,
                                                           const int W1, const int W2, const int SYNC)
 {
-    int32_t mx = clamp(p[P_S7], 0, 128), wa = 128 - mx, p1 = v->s[6], p2 = v->s[8], c1 = v->s[9];
+    int32_t mx = clamp(p[P_S7] + (m->lk == LK_MIX ? lfo_delta(m->lm, 128) : 0), 0, 128), wa = 128 - mx, p1 = v->s[6], p2 = v->s[8], c1 = v->s[9];
     uint32_t i, ph1 = v->ph[0], ph2 = v->ph[2], inc1 = m->inc, q;
-    uint32_t inc2 = cents_inc(m->pitch16, (p[P_S4] - 24) * 100 + p[P_S5] - 50, m->fine), d1 = (inc1 >> 15) ? inc1 >> 15 : 1u;
+    uint32_t inc2 = cents_inc(m->pitch16, clamp((p[P_S4] - 24) * 100 + p[P_S5] - 50 + (m->lk == LK_TUNE2 ? lfo_delta(m->lm, 1200) : 0), -2400, 2400), m->fine), d1 = (inc1 >> 15) ? inc1 >> 15 : 1u;
     uint32_t d2 = (inc2 >> 15) ? inc2 >> 15 : 1u;
     const int32_t jw1 = W1 ? 32768 : 65536, jw2 = W2 ? 32768 : 65536;   /* a PULSE's edges are half a saw's step */
     for (i = 0; i < n; i++) {
@@ -101,7 +101,8 @@ __attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voi
 static void sem_osc(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m)
 {
     uint32_t pq1 = v->ph[1] >> 16, pq2 = v->ph[1] & 0xFFFFu;
-    int32_t g1 = (clamp(p[P_S1], 0, SEM_PW_MAX) << 8) - (int32_t)pq1, g2 = (clamp(p[P_S3], 0, SEM_PW_MAX) << 8) - (int32_t)pq2;
+    int32_t dpw = m->lk == LK_PW ? lfo_delta(m->lm, SEM_PW_MAX << 8) : 0;       /* LFO 1 on both PWs (Q8) */
+    int32_t g1 = clamp((p[P_S1] << 8) + dpw, 0, SEM_PW_MAX << 8) - (int32_t)pq1, g2 = clamp((p[P_S3] << 8) + dpw, 0, SEM_PW_MAX << 8) - (int32_t)pq2;
     pq1 += (uint32_t)(g1 >> 2);                          /* PW glides like CUT: a knob step does not tick */
     pq2 += (uint32_t)(g2 >> 2);
     v->ph[1] = pq1 << 16 | pq2;
@@ -136,9 +137,13 @@ static void sem_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
     v->s[3] = sr;
 }
 
+static const ltgt_t LT_SEM[5] = {{LK_PW, "PW", "PW 1 + 2"}, {LK_TUNE2, "Tune 2", "VCO2 TUNE"}, {LK_PITCH, "Pitch", "PITCH"}, {LK_CUT, "Cutoff", "CUTOFF"}, {LK_MIX, "Mix", "MIX"}};
 static const engine_t ENG_SEM = {
     .name = "SEM",
     .pbase = P_S0,
+    .lt = LT_SEM,
+    .nlt = 5,
+    .ltp = P_L1TS,
     .edit = {
         {"WAVE1", F_ENUM, 0, 1, 0, SEM_WAVE_NAMES, 0},
         {"PW1", F_INT, 0, SEM_PW_MAX, 63, 0, 0},

@@ -2,6 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* The engines (WAVE, SEM), chosen with ALGORITHM (P_ENG), and the part's sound at power-on. */
 #include "dsp.c"
+#include "lfo.c"
 #include "eng_wave.c"
 #include "eng_sem.c"
 

@@ -95,9 +95,11 @@ static void mix_block(int32_t *out, uint32_t n)
         send_l[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
     }
     PFX(0, events_block(n));
+    lfo2_begin();                                       /* LFO 2: its FX parameter for this block (lfo.c) */
     PFX(1, mix_part(&trk[0], n));
     PFX(6, echo_block(n));                              /* before SPACE: the send hears the echoes */
     PFX(3, space_block(send_l, send_r, wet_l, wet_r, n));
+    lfo2_end();
 #if KOSMO_PERF
     uint32_t _t4 = fm1_ticks();
 #endif
