@@ -550,17 +550,16 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     for (i = 0; i < NVOICE; i++) {
         voice_t *v = &t->v[i];
         vmod_t m;
-        int32_t env, pitch, lm = 0, lf = 0;
+        int32_t env, pitch;
         if (!v->active)
             continue;
         v->fine = t->eng ? 0 : v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
         env = env_tick(t, v);
-        if (dp)                                         /* LFO 1: the shared one, or this voice's own (LFO RETRIG) */
-            lm = lfo_retrig ? lfo_depth(lfo_tick(&v->lfo, (uint32_t)p[P_L1SH], linc), dp) : lms;
+        lfo_voice(&m, v, dp, lms, lk, (uint32_t)p[P_L1SH], linc);
         m.envq15 = env;
         m.amp1 = mulq15(env, v->vel * 258);
-        if (lk == LK_VOL)                               /* tremolo: from the knob's level down to 1 - DEPTH, never above */
-            m.amp1 = mulq15(m.amp1, 32768 - (dp << 7) + (lm >> 1));
+        if (m.lgain != 32768)
+            m.amp1 = mulq15(m.amp1, m.lgain);
         m.amp0 = v->env_out;
         v->env_out = m.amp1;
         if (v->pitch_cur != v->pitch16) {               /* glide */
@@ -573,18 +572,13 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         if (!env && !m.amp0 && v->stage == 2)
             continue;                                   /* held at a silent sustain (SUS 0): nothing to render */
         pitch = v->pitch_cur + tune + bend16 + ((m.envq15 * p[P_ED_PIT] * 3) >> 15);
-        if (lk == LK_PITCH)                             /* +-1200 cents at full DEPTH */
-            pitch += cents_split(lfo_delta(lm, 1200), &lf);
-        m.pitch16 = clamp(pitch, 0, 2047);
+        m.pitch16 = clamp(pitch + m.lpit, 0, 2047);
         m.inc = pitch_inc(m.pitch16);
-        m.fine = v->fine + tune_fine + bend_fine + lf;
+        m.fine = v->fine + tune_fine + bend_fine + m.lfine;
         if (m.fine)                                      /* residual below 1/16 semitone */
             m.inc += (uint32_t)((int32_t)(m.inc >> 12) * m.fine);
         m.cutoff = (m.envq15 * p[P_ED_FLT]) >> 7;
-        if (lk == LK_CUT)
-            m.cutoff += lfo_delta(lm, 127 << 8);
-        m.lm = lm;                                      /* the engine's own targets (SCAN, PW, TUNE 2, MIX) read these */
-        m.lk = (uint8_t)lk;
+        m.cutoff += m.lcut;
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         tr_side |= v->fk ? 1u : 0u;

@@ -84,8 +84,8 @@ typedef struct {                 /* per-voice control-rate modulation, computed 
     int32_t envq15;              /* env value (for engines that use it as a mod source) */
     int32_t fk;                  /* unison copy's spread, in DETUNE units (fine = fk * DETUNE * 56 / 889) */
     int32_t fine;                /* the residual below 1/16 semitone in inc: unison detune, TUNE, bend (1/4096) */
-    int32_t lm;                  /* LFO 1 now, Q15 times DEPTH (lfo_delta scales it), for the engine's own target lk */
-    uint8_t lk;                  /* LK_*, or LK_NONE */
+    int32_t lgain, lpit, lfine, lcut;   /* LFO 1 (lfo_voice): the amplitude factor (Q15), pitch (1/16 semitone, residual) and cutoff it adds */
+    int32_t lscan, lpw, ltune, lmix;    /* and the engine's own targets: SCAN (Q8 frames), PW (Q8), VCO2 TUNE (cents), MIX */
 } vmod_t;
 
 struct track;

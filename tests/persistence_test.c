@@ -127,6 +127,16 @@ int main(void)
         bad += check("SEM UNISON ON (with ECHO STEREO) survives a save and a power-on load", st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p &&
                       set_flags(p.lowcut) == 3u && set_flags(settings.lowcut) == 3u);
     }
+    {   /* LFO RETRIG (SETTINGS page, bit 2): OFF in a fresh record and in the older tags, ON saved with the others, back after power-on */
+        bad += check("LFO RETRIG is OFF in a fresh record and the older tags", (set_flags(0) >> 2) == 0 && (set_flags(ECHO_STEREO_TAG | SEM_UNISON_TAG) >> 2) == 0);
+        settings.lowcut = ECHO_STEREO_TAG | SEM_UNISON_TAG | LFO_RETRIG_TAG;
+        settings_save();
+        persist_saved.lowcut = 0;
+        memset(&settings, 0, sizeof settings);
+        persist_boot();
+        bad += check("LFO RETRIG ON (with the others) survives a save and a power-on load", st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p &&
+                      set_flags(p.lowcut) == 7u && set_flags(settings.lowcut) == 7u);
+    }
     {   /* no flash part: RAM only, nothing written */
         reset();
         flash_ok = 0;

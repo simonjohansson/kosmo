@@ -56,9 +56,9 @@ _Static_assert(CTL <= HALF_FRAMES, "sem_osc: the block fits xbuf");
 __attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m, uint32_t pw1, uint32_t pw2,
                                                           const int W1, const int W2, const int SYNC)
 {
-    int32_t mx = clamp(p[P_S7] + (m->lk == LK_MIX ? lfo_delta(m->lm, 128) : 0), 0, 128), wa = 128 - mx, p1 = v->s[6], p2 = v->s[8], c1 = v->s[9];
+    int32_t mx = clamp(p[P_S7] + m->lmix, 0, 128), wa = 128 - mx, p1 = v->s[6], p2 = v->s[8], c1 = v->s[9];
     uint32_t i, ph1 = v->ph[0], ph2 = v->ph[2], inc1 = m->inc, q;
-    uint32_t inc2 = cents_inc(m->pitch16, clamp((p[P_S4] - 24) * 100 + p[P_S5] - 50 + (m->lk == LK_TUNE2 ? lfo_delta(m->lm, 1200) : 0), -2400, 2400), m->fine), d1 = (inc1 >> 15) ? inc1 >> 15 : 1u;
+    uint32_t inc2 = cents_inc(m->pitch16, clamp((p[P_S4] - 24) * 100 + p[P_S5] - 50 + m->ltune, -2450, 2450), m->fine), d1 = (inc1 >> 15) ? inc1 >> 15 : 1u;
     uint32_t d2 = (inc2 >> 15) ? inc2 >> 15 : 1u;
     const int32_t jw1 = W1 ? 32768 : 65536, jw2 = W2 ? 32768 : 65536;   /* a PULSE's edges are half a saw's step */
     for (i = 0; i < n; i++) {
@@ -101,8 +101,7 @@ __attribute__((always_inline)) static inline void sem_loop(const int16_t *p, voi
 static void sem_osc(const int16_t *p, voice_t *v, uint32_t n, const vmod_t *m)
 {
     uint32_t pq1 = v->ph[1] >> 16, pq2 = v->ph[1] & 0xFFFFu;
-    int32_t dpw = m->lk == LK_PW ? lfo_delta(m->lm, SEM_PW_MAX << 8) : 0;       /* LFO 1 on both PWs (Q8) */
-    int32_t g1 = clamp((p[P_S1] << 8) + dpw, 0, SEM_PW_MAX << 8) - (int32_t)pq1, g2 = clamp((p[P_S3] << 8) + dpw, 0, SEM_PW_MAX << 8) - (int32_t)pq2;
+    int32_t g1 = clamp((p[P_S1] << 8) + m->lpw, 0, SEM_PW_MAX << 8) - (int32_t)pq1, g2 = clamp((p[P_S3] << 8) + m->lpw, 0, SEM_PW_MAX << 8) - (int32_t)pq2;
     pq1 += (uint32_t)(g1 >> 2);                          /* PW glides like CUT: a knob step does not tick */
     pq2 += (uint32_t)(g2 >> 2);
     v->ph[1] = pq1 << 16 | pq2;

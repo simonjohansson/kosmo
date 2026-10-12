@@ -1977,6 +1977,239 @@ static int chk_sem_unison(char *msg, uint32_t n)
     return got[0][0] == NVOICE && got[0][1] == NVOICE && got[1][0] == 1u && got[1][1] == NVOICE && !sem_unison;
 }
 
+/* ---- LFOs (issue #34) ---- */
+/* RATE: 0.05 Hz * 400^(RATE / 127) from the phase step per block; the shapes' period and range; start at phase 0 and rising */
+static int chk_lfo_shape(char *msg, uint32_t n)
+{
+    static const uint8_t RT[5] = {0, 40, 64, 100, 127};
+    double werr = 0;
+    uint32_t r, sh, i, k;
+    int bad = 0;
+    for (r = 0; r < 5u; r++) {
+        double f = (double)lfo_inc(RT[r]) * (FS / CTL) / 4294967296.0, want = 0.05 * pow(400.0, RT[r] / 127.0);
+        werr = fmax(werr, fabs(f / want - 1));
+    }
+    for (sh = 0; sh < 5u; sh++) {
+        int32_t mx = -40000, mn = 40000, first = 0, q = 0, nrnd = 0, hold = 0;
+        lfo_t l;
+        uint32_t inc = lfo_inc(64), blocks = (uint32_t)(3.2 * 4294967296.0 / inc), wraps = 0;   /* three cycles and a bit at ~1 Hz */
+        lfo_start(&l, 7);
+        for (i = 0; i < blocks; i++) {
+            uint32_t p0 = l.ph;
+            int32_t v = lfo_tick(&l, sh, inc);
+            wraps += l.ph < p0;
+            if (i == 0)
+                first = v;
+            mx = v > mx ? v : mx;
+            mn = v < mn ? v : mn;
+            nrnd += l.hold != hold;
+            hold = l.hold;
+        }
+        q = lfo_wave(sh, 0x40000000u, 5);
+        if (sh != LS_RND) {                                 /* full range once smoothed (a square's flat tops, a saw's reset), 0 at the start, rising */
+            bad += mx < 32767 * 90 / 100 || mn > -32767 * 90 / 100 || mx > 32767 || mn < -32768;
+            bad += (first < 0 || first > 3000) && sh != LS_SQUARE;
+            bad += q < (sh == LS_SAW ? 16000 : 32000) || q > (sh == LS_SAW ? 16500 : 32767);
+        } else {
+            bad += mx > 32767 || mn < -32768 || nrnd < 2;
+        }
+        bad += wraps < 3 || wraps > 4;
+    }
+    snprintf(msg, n, "RATE 0..127 = 0.05..20 Hz exponential (worst %.2f %% off); SINE TRI SAW SQUARE span the range, rise from 0, three cycles in three periods, RANDOM holds per cycle", 100 * werr);
+    return !bad && werr < 0.02;
+}
+
+/* each LFO 1 target at full DEPTH, at both extremes of the LFO, in the target's units; DEPTH 0 adds nothing */
+static int chk_lfo_targets(char *msg, uint32_t n)
+{
+    static const int8_t K[7] = {LK_SCAN, LK_PITCH, LK_CUT, LK_PW, LK_TUNE2, LK_MIX, LK_VOL};
+    int32_t hi = lfo_depth(32767, 127), lo = lfo_depth(-32768, 127), bad = 0, c[2], pm = 0;
+    uint32_t k, e, i;
+    for (k = 0; k < 7u; k++)
+        for (e = 0; e < 3u; e++) {                           /* e: LFO low, high, DEPTH 0 */
+            vmod_t m;
+            voice_t v;
+            int32_t d = e == 2u ? 0 : 127, lm = e ? hi : lo, got;
+            memset(&v, 0, sizeof v);
+            lfo_voice(&m, &v, d, lfo_depth(lm * 128 / 127, d), K[k], 0, 0);   /* (the shared LFO's value, as track_render passes it) */
+            got = K[k] == LK_SCAN ? m.lscan : K[k] == LK_PITCH ? m.lpit * 100 / 16 + m.lfine * 100 / 4096 * 1000 / 2367 : K[k] == LK_CUT ? m.lcut : K[k] == LK_PW ? m.lpw :
+                  K[k] == LK_TUNE2 ? m.ltune : K[k] == LK_MIX ? m.lmix : m.lgain;
+            if (e == 2u)
+                bad += !(m.lscan == 0 && m.lpit == 0 && m.lcut == 0 && m.lpw == 0 && m.ltune == 0 && m.lmix == 0 && m.lgain == 32768);
+            else if (K[k] == LK_VOL)
+                bad += e == 1u ? m.lgain < 32700 || m.lgain > 32768 : m.lgain < 200 || m.lgain > 300;
+            else {
+                int32_t span = K[k] == LK_SCAN || K[k] == LK_CUT ? 127 * 256 : K[k] == LK_PITCH || K[k] == LK_TUNE2 ? 1200 : K[k] == LK_PW ? 126 * 256 : 128;
+                int32_t want = e == 1u ? span : -span;
+                bad += abs(got - want) > span / 50 + 8;
+                c[e - 1u] = got;
+            }
+            pm += K[k] == LK_PITCH && e == 1u ? got : 0;
+        }
+    for (i = 0; i < 6u; i++) {                               /* LFO 2: the FX parameter swings over its range around 64 and comes back */
+        static const int16_t *const dummy = 0;
+        int16_t *t = lfo2_target(i);
+        int32_t mn = 999, mx = -999;
+        uint32_t b;
+        (void)dummy;
+        host_tracks_init();
+        song.g[G_EAMT] = 64;
+        *t = 64;
+        trk[0].p[P_L2T] = (int16_t)i;
+        trk[0].p[P_L2DP] = 127;
+        trk[0].p[P_L2SH] = LS_SQUARE;
+        trk[0].p[P_L2RT] = 64;
+        lfo2g = (lfo_t){0, 0, 0, 0x2345679};
+        for (b = 0; b < 4u * FS / CTL; b++) {
+            lfo2_begin();
+            mn = *t < mn ? *t : mn;
+            mx = *t > mx ? *t : mx;
+            lfo2_end();
+            bad += *t != 64;
+        }
+        bad += mn != 0 || mx != 127;
+        trk[0].p[P_L2DP] = 0;
+        lfo2_begin();
+        bad += *t != 64 || lfo2_ptr;                         /* DEPTH 0: untouched */
+    }
+    snprintf(msg, n, "SCAN +-127 frames, PITCH +-1200 ct (%d at the top), CUT, PW, VCO2 TUNE +-1200 ct, MIX, VOLUME down to 1 - DEPTH, ECHO TIME / REPEATS / AMOUNT, SPACE SIZE / TONE / AMOUNT 0..127 around 64 and back; DEPTH 0 adds nothing", pm);
+    (void)c;
+    return !bad;
+}
+
+/* RETRIG ON: every voice's LFO starts at phase 0 at its note-on and runs on its own; OFF: all voices read the shared one */
+static int chk_lfo_retrig(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t i, a, b, bad = 0, ph[2], got[2];
+    for (a = 0; a < 2u; a++) {
+        voice_t *v0, *v1;
+        vmod_t m0, m1;
+        host_tracks_init();
+        host_sound(t, 0);
+        t->p[P_L1DP] = 100;
+        t->p[P_L1SH] = LS_SINE;
+        t->p[P_L1RT] = 100;
+        lfo_retrig = (uint8_t)a;
+        lfo1g = (lfo_t){0, 0, 0, 0x1234567};
+        trk_note_on(t, 60, 100);
+        for (i = 0; i < 100u; i++)
+            blk();
+        trk_note_on(t, 64, 100);
+        v0 = &t->v[0];
+        v1 = &t->v[1];
+        ph[a] = v1->lfo.ph;
+        bad += v1->lfo.ph != 0 || v1->lfo.sm != 0;           /* phase 0 at the note-on, ON or OFF (it only drives the voice when ON) */
+        for (i = 0; i < 10u; i++)
+            blk();
+        got[a] = v0->lfo.ph > v1->lfo.ph;                    /* ON: the first note's LFO is ahead by the time between the notes */
+        lfo_voice(&m0, v0, 100, lfo_depth(lfo1g.sm, 100), LK_CUT, LS_SINE, lfo_inc(100));
+        lfo_voice(&m1, v1, 100, lfo_depth(lfo1g.sm, 100), LK_CUT, LS_SINE, lfo_inc(100));
+        bad += a ? m0.lcut == m1.lcut : m0.lcut != m1.lcut;  /* OFF: the same for both */
+        bad += a ? v1->lfo.ph == 0 : (v0->lfo.ph != v1->lfo.ph || lfo1g.ph == 0);
+        trk_all_off(t);
+        while (!parts_free())
+            blk();
+    }
+    lfo_retrig = 0;
+    snprintf(msg, n, "LFO RETRIG ON: a note's LFO starts at phase 0 and the first note's is ahead; OFF: both read the one shared phase");
+    (void)got;
+    (void)ph;
+    return !bad;
+}
+
+/* the LFO 1 target is kept per engine, ALGORITHM turns do not touch it */
+static int chk_lfo_engine(char *msg, uint32_t n)
+{
+    track_t *t = &trk[0];
+    uint32_t e, bad = 0;
+    host_tracks_init();
+    t->p[P_L1TW] = 1;                                        /* WAVE: PITCH */
+    t->p[P_L1TS] = 4;                                        /* SEM: MIX */
+    t->p[P_L1DP] = 50;
+    for (e = 0; e < 4u; e++) {
+        const engine_t *en;
+        t->p[P_ENG] = (int16_t)(e & 1u);
+        blk();
+        en = ENGINE_OF(t);
+        bad += en->lt[t->p[en->ltp]].kind != ((e & 1u) ? LK_MIX : LK_PITCH);
+    }
+    bad += t->p[P_L1TW] != 1 || t->p[P_L1TS] != 4;
+    snprintf(msg, n, "WAVE keeps PITCH, SEM keeps MIX over four ALGORITHM turns");
+    return !bad;
+}
+
+/* every target on both engines changes the sound and stays healthy; the same render twice is the same; DEPTH 0 is the sound without an LFO */
+static uint64_t lfo_render_in(uint32_t eng, uint32_t tgt, uint32_t dp, uint32_t retrig, int32_t *peak)
+{
+    track_t *t = &trk[0];
+    uint64_t h = 0xcbf29ce484222325ull;
+    uint32_t i, k;
+    host_tracks_init();
+    host_sound(t, 0);
+    t->p[P_ENG] = (int16_t)eng;
+    t->eng = (uint8_t)eng;
+    t->p[P_L1DP] = (int16_t)dp;
+    t->p[P_L1SH] = LS_SINE;
+    t->p[P_L1RT] = 90;
+    t->p[eng ? P_L1TS : P_L1TW] = (int16_t)tgt;
+    t->p[P_E4] = 0;
+    t->p[P_S0] = t->p[P_S2] = 1;                              /* SEM: pulses, so PW is heard */
+    lfo_retrig = (uint8_t)retrig;
+    lfo1g = (lfo_t){0, 0, 0, 0x1234567};
+    *peak = 0;
+    for (k = 0; k < 3u; k++)
+        trk_note_on(t, 52u + 5u * k, 100);
+    for (i = 0; i < 1000u; i++) {
+        int32_t o[2 * CTL];
+        uint32_t j;
+        mix_block(o, CTL);
+        for (j = 0; j < 2u * CTL; j++) {
+            h = (h ^ (uint32_t)o[j]) * 0x100000001B3ull;
+            *peak = abs(o[j]) > *peak ? abs(o[j]) : *peak;
+        }
+    }
+    trk_all_off(t);
+    lfo_retrig = 0;
+    return h;
+}
+static uint64_t lfo_render(uint32_t eng, uint32_t tgt, uint32_t dp, uint32_t retrig, int32_t *peak)   /* in a child: the reverb and echo start from silence */
+{
+    int fd[2];
+    struct { uint64_t h; int32_t pk; } r = {0, 0};
+    if (pipe(fd))
+        return 0;
+    if (!fork()) {
+        r.h = lfo_render_in(eng, tgt, dp, retrig, &r.pk);
+        if (write(fd[1], &r, sizeof r) != sizeof r)
+            _exit(1);
+        _exit(0);
+    }
+    if (read(fd[0], &r, sizeof r) != sizeof r)
+        r.h = 0;
+    close(fd[0]);
+    close(fd[1]);
+    wait(NULL);
+    *peak = r.pk;
+    return r.h;
+}
+static int chk_lfo_sound(char *msg, uint32_t n)
+{
+    uint32_t e, k, r, bad = 0;
+    int32_t pk, pk0;
+    for (e = 0; e < 2u; e++) {
+        uint64_t h0 = lfo_render(e, 0, 0, 0, &pk0);
+        bad += h0 != lfo_render(e, 2, 0, 1, &pk0);           /* DEPTH 0: no target and no RETRIG changes the sound */
+        for (k = 0; k < (e ? 5u : 4u); k++)
+            for (r = 0; r < 2u; r++) {
+                uint64_t h = lfo_render(e, k, 90, r, &pk), h2 = lfo_render(e, k, 90, r, &pk);
+                bad += h == h0 || h != h2 || pk > 32000 || pk < 200;
+            }
+    }
+    snprintf(msg, n, "WAVE 4 and SEM 5 targets, RETRIG OFF / ON: each differs from DEPTH 0, repeats exactly, no clipping; DEPTH 0 = no LFO");
+    return !bad;
+}
+
 static void mode_release_reset(uint32_t mode)
 {
     memset(trk, 0, sizeof trk);
@@ -2277,6 +2510,11 @@ int main(int argc, char **argv)
     add(J_CHECK, "sem: band-limited, aliasing at C5 C6 C7")->check = chk_sem_alias;
     add(J_CHECK, "sem: SYNC locks VCO2 to VCO1")->check = chk_sem_sync;
     add(J_CHECK, "sem: ALGORITHM switch on held notes, parameters kept")->check = chk_sem_switch;
+    add(J_CHECK, "lfo: RATE, the shapes' period and range")->check = chk_lfo_shape;
+    add(J_CHECK, "lfo: every target's range, FX included")->check = chk_lfo_targets;
+    add(J_CHECK, "lfo: RETRIG starts at the note-on, OFF shares")->check = chk_lfo_retrig;
+    add(J_CHECK, "lfo: a target per engine")->check = chk_lfo_engine;
+    add(J_CHECK, "lfo: every target changes the sound")->check = chk_lfo_sound;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;

@@ -22,7 +22,7 @@ static inline int32_t lfo_wave(uint32_t shape, uint32_t ph, int32_t hold)
 /* the phase step per block for RATE 0..127: 0.05 Hz * 400^(RATE / 127), as a pitch (125 = 12.8 Hz = 0.05 Hz * 256) */
 static inline uint32_t lfo_inc(int32_t rate) { return pitch_inc(125u + (uint32_t)clamp(rate, 0, 127) * 835u / 64u) >> (8 - CTL_LOG2); }
 
-static int32_t lfo_tick(lfo_t *l, uint32_t shape, uint32_t inc)
+__attribute__((noinline)) static int32_t lfo_tick(lfo_t *l, uint32_t shape, uint32_t inc)
 {
     uint32_t ph = l->ph + inc;
     if (ph < inc)
@@ -51,6 +51,30 @@ static int32_t cents_split(int32_t ct, int32_t *fine)
     return c16;
 }
 
+/* LFO 1 for one voice and block, into m: from the shared LFO (lms) or, with LFO RETRIG, the voice's own; what the target k adds */
+__attribute__((noinline)) static void lfo_voice(vmod_t *m, voice_t *v, int32_t dp, int32_t lms, int32_t k, uint32_t shape, uint32_t inc)
+{
+    int32_t lm = lfo_retrig ? lfo_depth(lfo_tick(&v->lfo, shape, inc), dp) : lms;
+    m->lgain = 32768;                           /* VOLUME: tremolo from the knob's level down to 1 - DEPTH, never above */
+    m->lpit = m->lfine = m->lcut = m->lscan = m->lpw = m->ltune = m->lmix = 0;
+    if (!dp)
+        return;
+    if (k == LK_VOL)
+        m->lgain = 32768 - (dp << 7) + (lm >> 1);
+    else if (k == LK_PITCH)                     /* +-1200 cents at full DEPTH */
+        m->lpit = cents_split(lfo_delta(lm, 1200), &m->lfine);
+    else if (k == LK_CUT)
+        m->lcut = lfo_delta(lm, 127 << 8);
+    else if (k == LK_SCAN)
+        m->lscan = lfo_delta(lm, 127 << 8);
+    else if (k == LK_PW)
+        m->lpw = lfo_delta(lm, 126 << 8);
+    else if (k == LK_TUNE2)
+        m->ltune = lfo_delta(lm, 1200);
+    else if (k == LK_MIX)
+        m->lmix = lfo_delta(lm, 128);
+}
+
 /* LFO 2: the FX parameter (song.g, or the SPACE amount) is replaced by its modulated value for the block and put back after it
  * (both in the audio ISR: the UI never sees the modulated one) */
 static const ltgt_t LT_FX[6] = {{LK_ETIME, "E Time", "ECHO TIME"}, {LK_EFB, "E Reps", "ECHO REPEATS"}, {LK_EAMT, "E Amt", "ECHO AMOUNT"},
@@ -67,7 +91,7 @@ static int16_t *lfo2_target(uint32_t i)
     default: return &song.g[G_ETIME];
     }
 }
-static void lfo2_begin(void)
+__attribute__((noinline)) static void lfo2_begin(void)
 {
     const int16_t *p = trk[0].p;
     int32_t lm = lfo_depth(lfo_tick(&lfo2g, (uint32_t)p[P_L2SH], lfo_inc(p[P_L2RT])), p[P_L2DP]);
@@ -81,7 +105,7 @@ static void lfo2_begin(void)
     lfo2_sv = *t;
     *t = (int16_t)clamp(*t + lfo_delta(lm, 127), 0, 127);
 }
-static void lfo2_end(void)
+__attribute__((noinline)) static void lfo2_end(void)
 {
     if (lfo2_ptr)
         *lfo2_ptr = lfo2_sv;
