@@ -522,6 +522,7 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     int32_t tune = song.g[G_TUNE] >= 0 ? song.g[G_TUNE] * 16 / 100 : -((-song.g[G_TUNE] * 16 + 99) / 100);
     int32_t tune_fine = (song.g[G_TUNE] * 16 - tune * 100) * 2367 / 16000;   /* rest, in 1/4096 (1 ct = 2.367) */
     int32_t bend, bend16, bend_fine, dp, lms, lk;
+    vmod_t m;
     uint32_t linc;
     {
         int32_t d = midi_bend_target[0] - midi_bend_q8[0];
@@ -544,18 +545,19 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     for (i = 0; i < 3u * n; i++)
         out[i] = 0;
     tr_side = 0;
-    dp = p[P_L1DP];
-    lms = lfo_depth(lfo_tick(&lfo1g, (uint32_t)p[P_L1SH], linc = lfo_inc(p[P_L1RT])), dp);   /* LFO 1: the shared one (free-running) */
-    lk = dp ? e->lt[clamp(p[e->ltp], 0, e->nlt - 1)].kind : LK_NONE;
+    lfo1_block(p, e);
+    dp = l1.dp, lms = l1.lms, lk = l1.lk, linc = l1.inc;
+    m.lgain = 32768;                                    /* LFO 1 off: these stay, DEPTH > 0 sets them per voice (lfo_voice) */
+    m.lpit = m.lfine = m.lcut = m.lscan = m.lpw = m.ltune = m.lmix = 0;
     for (i = 0; i < NVOICE; i++) {
         voice_t *v = &t->v[i];
-        vmod_t m;
         int32_t env, pitch;
         if (!v->active)
             continue;
         v->fine = t->eng ? 0 : v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
         env = env_tick(t, v);
-        lfo_voice(&m, v, dp, lms, lk, (uint32_t)p[P_L1SH], linc);
+        if (dp)
+            lfo_voice(&m, v, dp, lms, lk, (uint32_t)p[P_L1SH], linc);
         m.envq15 = env;
         m.amp1 = mulq15(env, v->vel * 258);
         if (m.lgain != 32768)

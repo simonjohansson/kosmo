@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Device benchmark for a KOSMO_PERF=1 KOSMO_CDC=1 build: drives notes/knobs over USB-MIDI (CC 102 page, 103 wave,
-104 scan, 105 fat, 106 detune, 107 cutoff, 108 preset, 109 ECHO char, 110 ECHO amount, 111 SPACE program, 112 SPACE amount, 113 engine: 0 WAVE, 1 SEM, 2 SEM pulses + sync) and reads the "P ..." / "C ..." lines from the CDC port.
+104 scan, 105 fat, 106 detune, 107 cutoff, 108 preset, 109 ECHO char, 110 ECHO amount, 111 SPACE program, 112 SPACE amount, 113 engine: 0 WAVE, 1 SEM, 2 SEM pulses + sync, 114 LFO 1 depth, 115 LFO 1 target index, 116 LFO 1 rate, 117 LFO 2 depth, 118 LFO 2 target, 119 LFO RETRIG 0 / 1) and reads the "P ..." / "C ..." lines from the CDC port.
 
     tools/perf_host.py [--port /dev/cu.usbmodemXXXX] [--secs 5]
 """
@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--space", action="store_true", help="only the ECHO CLEAN + SPACE program sweep (issue #27)")
     ap.add_argument("--echo", action="store_true", help="only the ECHO off / each character sweep, SPACE off (issue #28)")
     ap.add_argument("--sem", action="store_true", help="only WAVE vs SEM (saws, then pulses + sync), 8 notes, ECHO CLEAN + SPACE (issue #33)")
+    ap.add_argument("--lfo", action="store_true", help="only the LFOs: WAVE and SEM pulses + sync, 8 notes, ECHO CLEAN + SPACE, no LFO, then each LFO 1 target with RETRIG OFF / ON, then LFO 2 (issue #34)")
     ap.add_argument("--midi", default="Felucca")
     a = ap.parse_args()
     ser = serial.Serial(a.port, 115200, timeout=0.2)
@@ -75,6 +76,19 @@ def main():
 
     notes(False); cc(123, 0); cc(102, 0); cc(105, 0)
     time.sleep(2)
+    if a.lfo:                                         # 8 notes, FAT 0, ECHO CLEAN (64), SPACE CASTLE (100); LFO depth 100 at RATE 100 (~5 Hz)
+        cc(108, 0); cc(109, 0); cc(110, 64); cc(111, 1); cc(112, 100); cc(116, 100); cc(114, 0); cc(117, 0); cc(119, 0)
+        for eng, name, tg in ((0, "WAVE", ("SCAN", "PITCH", "CUTOFF", "VOLUME")), (2, "SEM pulses+sync", ("PW", "TUNE2", "PITCH", "CUTOFF", "MIX"))):
+            phase(f"{name} no LFO", lambda: (notes(False), cc(113, eng), cc(105, 0), time.sleep(1.5), notes(True)))
+            for r in (0, 1):
+                for i, t in enumerate(tg):
+                    phase(f"{name} {t} RETRIG {'ON' if r else 'OFF'}", lambda: (cc(119, r), cc(115, i), cc(114, 100), time.sleep(1.0)))
+            cc(114, 0)
+        for i, t in enumerate(("ECHO TIME", "ECHO REPEATS", "ECHO AMOUNT", "SPACE SIZE", "SPACE TONE", "SPACE AMOUNT")):
+            phase(f"WAVE LFO 2 {t}", lambda: (cc(119, 0), cc(113, 0), cc(118, i), cc(117, 100), time.sleep(1.0)))
+        cc(117, 0); cc(119, 0); notes(False); cc(113, 0)
+        stop = True
+        return
     if a.sem:                                         # 8 notes, FAT 0, ECHO CLEAN (amount 64), SPACE CASTLE amount 100: WAVE, SEM, SEM pulses + sync
         cc(108, 0); cc(109, 0); cc(110, 64); cc(111, 1); cc(112, 100)
         for eng, name in ((0, "WAVE"), (1, "SEM saws"), (2, "SEM pulses + sync"), (0, "WAVE again")):

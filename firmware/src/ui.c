@@ -582,7 +582,7 @@ static void perf_cc(uint32_t cc, uint32_t v)
     else if (cc == 114u)
         trk[0].p[P_L1DP] = (int16_t)v;               /* LFO 1 DEPTH */
     else if (cc == 115u)
-        trk[0].p[P_L1TW] = trk[0].p[P_L1TS] = (int16_t)(v % 3u);   /* LFO 1 TARGET (an index both engines have) */
+        trk[0].p[P_L1TW] = (int16_t)(v > 3u ? 3u : v), trk[0].p[P_L1TS] = (int16_t)(v > 4u ? 4u : v);   /* LFO 1 TARGET, an index (clamped per engine) */
     else if (cc == 116u)
         trk[0].p[P_L1RT] = (int16_t)v;
     else if (cc == 117u)

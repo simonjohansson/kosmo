@@ -3,7 +3,7 @@
 # Rewritten by BUDGET_UPDATE=1.
 wave_render 625
 sem_render 3587
-fm1_alnk0_irq 2088
+fm1_alnk0_irq 2247
 fm1_timer5_irq 23968
 space_block 778
 echo_block 881

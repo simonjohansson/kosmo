@@ -51,14 +51,12 @@ static int32_t cents_split(int32_t ct, int32_t *fine)
     return c16;
 }
 
-/* LFO 1 for one voice and block, into m: from the shared LFO (lms) or, with LFO RETRIG, the voice's own; what the target k adds */
+/* LFO 1 (DEPTH > 0) for one voice and block, into m: from the shared LFO (lms) or, with LFO RETRIG, the voice's own; what the target k adds */
 __attribute__((noinline)) static void lfo_voice(vmod_t *m, voice_t *v, int32_t dp, int32_t lms, int32_t k, uint32_t shape, uint32_t inc)
 {
     int32_t lm = lfo_retrig ? lfo_depth(lfo_tick(&v->lfo, shape, inc), dp) : lms;
     m->lgain = 32768;                           /* VOLUME: tremolo from the knob's level down to 1 - DEPTH, never above */
     m->lpit = m->lfine = m->lcut = m->lscan = m->lpw = m->ltune = m->lmix = 0;
-    if (!dp)
-        return;
     if (k == LK_VOL)
         m->lgain = 32768 - (dp << 7) + (lm >> 1);
     else if (k == LK_PITCH)                     /* +-1200 cents at full DEPTH */
@@ -73,6 +71,22 @@ __attribute__((noinline)) static void lfo_voice(vmod_t *m, voice_t *v, int32_t d
         m->ltune = lfo_delta(lm, 1200);
     else if (k == LK_MIX)
         m->lmix = lfo_delta(lm, 128);
+}
+
+/* LFO 1 once a block: the shared LFO runs free (at DEPTH 0 only its phase, for the UI's dot); l1 is what the voices use */
+static struct { int32_t dp, lms, lk; uint32_t inc; } l1;
+__attribute__((noinline)) static void lfo1_block(const int16_t *p, const engine_t *e)
+{
+    l1.dp = p[P_L1DP];
+    l1.inc = lfo_inc(p[P_L1RT]);
+    l1.lms = 0;
+    l1.lk = LK_NONE;
+    if (l1.dp) {
+        l1.lms = lfo_depth(lfo_tick(&lfo1g, (uint32_t)p[P_L1SH], l1.inc), l1.dp);
+        l1.lk = e->lt[clamp(p[e->ltp], 0, e->nlt - 1)].kind;
+    } else {
+        lfo1g.ph += l1.inc;
+    }
 }
 
 /* LFO 2: the FX parameter (song.g, or the SPACE amount) is replaced by its modulated value for the block and put back after it
@@ -94,10 +108,13 @@ static int16_t *lfo2_target(uint32_t i)
 __attribute__((noinline)) static void lfo2_begin(void)
 {
     const int16_t *p = trk[0].p;
-    int32_t lm = lfo_depth(lfo_tick(&lfo2g, (uint32_t)p[P_L2SH], lfo_inc(p[P_L2RT])), p[P_L2DP]);
+    int32_t lm;
     int16_t *t;
-    if (!p[P_L2DP])
+    if (!p[P_L2DP]) {
+        lfo2g.ph += lfo_inc(p[P_L2RT]);         /* off: only the phase runs (the UI's dot) */
         return;
+    }
+    lm = lfo_depth(lfo_tick(&lfo2g, (uint32_t)p[P_L2SH], lfo_inc(p[P_L2RT])), p[P_L2DP]);
     t = lfo2_target((uint32_t)p[P_L2T]);
     if (t == &song.g[G_EAMT] && !*t)
         return;                                 /* ECHO off stays off (it would start and clear its lines every cycle) */
