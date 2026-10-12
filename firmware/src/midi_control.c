@@ -11,7 +11,7 @@ static uint8_t midi_pedal;
 #define MCLR(a, n) ((a)[(n) >> 5] &= ~(1u << ((n) & 31u)))
 
 #if KOSMO_PERF
-static void perf_cc(uint32_t cc, uint32_t v);        /* ui.c: CC 102.. set page, wave, scan, fat, detune, cutoff, preset, ECHO char / amount, SPACE program / amount, engine (113: 0 WAVE, 1 SEM, 2 SEM pulses + sync) (host-driven bench) */
+static void perf_cc(uint32_t cc, uint32_t v);        /* ui.c: CC 102.. set page, wave, scan, fat, detune, cutoff, preset, ECHO char / amount, SPACE program / amount, engine (113: 0 WAVE, 1 SEM, 2 SEM pulses + sync), LFO 1 depth / target / rate (114-116), LFO 2 depth / target (117, 118), LFO RETRIG (119) (host-driven bench) */
 #endif
 static int key_holds(uint32_t note);        /* input.c: a key held plays this note */
 static int midi_holds(uint32_t note) { return MBIT(midi_on, note) || MBIT(midi_sus, note); }
@@ -76,7 +76,7 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t d1, uint3
     }
     else if (st == 0xB0u) {
 #if KOSMO_PERF
-        if (d1 >= 102u && d1 <= 113u)
+        if (d1 >= 102u && d1 <= 119u)
             perf_cc(d1, d2);
         else
 #endif

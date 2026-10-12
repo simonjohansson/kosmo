@@ -12,6 +12,7 @@ typedef struct {
     uint8_t echo[4];             /* ECHO TIME REPEATS CHARACTER AMOUNT; AMOUNT 0: off, the others at their power-on values */
     uint8_t sem;                 /* 1: a SEM sound (then e[0], e[1] are unused), its P_S0..P_S7: wave1 pw1 wave2 pw2 tune fine sync mix */
     uint8_t s[8];
+    uint8_t lfo[8];              /* LFO 1: SHAPE RATE DEPTH TARGET (of the preset's engine), LFO 2: the same. DEPTH 0: both LFOs off (their defaults) */
 } preset_t;
 
 static const preset_t PRESETS[] = {
@@ -48,6 +49,13 @@ static void preset_load(uint32_t i)
     trk[0].p[P_REV] = s->rev;
     trk[0].p[P_VOICE] = s->voice;
     trk[0].p[P_ED_FLT] = s->fenv;
+    for (k = 0; k < 3u; k++) {                   /* an LFO with DEPTH 0 is off, with the defaults of its other knobs */
+        trk[0].p[P_L1SH + k] = s->lfo[2] ? s->lfo[k] : TP[P_L1SH + k].def;
+        trk[0].p[P_L2SH + k] = s->lfo[6] ? s->lfo[4u + k] : TP[P_L2SH + k].def;
+    }
+    trk[0].p[P_L1TW] = trk[0].p[P_L1TS] = 0;
+    trk[0].p[s->sem ? P_L1TS : P_L1TW] = s->lfo[2] ? s->lfo[3] : 0;
+    trk[0].p[P_L2T] = s->lfo[6] ? s->lfo[7] : 0;
     song.g[G_RSIZE] = s->rsize;
     song.g[G_RPROG] = s->rprog;
     song.g[G_RTONE] = GP[G_RTONE].def;

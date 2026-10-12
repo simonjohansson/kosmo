@@ -15,14 +15,17 @@
 #define PH 122
 
 typedef struct { const char *name; int16_t *v; uint8_t max, step; } kn_t;
-#define NPG 8                       /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE; 5: SETTINGS (GLO); 6, 7: SEM's 1/2 and 2/2 (HOME, the SEM engine) */
+#define NPG 11                      /* pages 0..3 as before (3: SPACE), 4: ECHO; the FX button cycles ECHO, SPACE; 5: SETTINGS (GLO); 6, 7: SEM's 1/2 and 2/2 (HOME, the SEM engine); 8, 9: LFO 1 (1/2) with WAVE's or SEM's targets, 10: LFO 2 (2/2) (the LFO button) */
 #define PG_SPACE 3
 #define PG_ECHO 4
 #define PG_SET 5
 #define PG_SEM1 6
 #define PG_SEM2 7
+#define PG_LFO1 8
+#define PG_LFO1S 9
+#define PG_LFO2 10
 #define UI_SEM (trk[0].p[P_ENG] == 1)   /* the engine ALGORITHM chose */
-static int16_t set_ec, set_su;              /* SETTINGS K1: ECHO STEREO, 0 PING-PONG / 1 STEREO; K2: SEM UNISON, 0 OFF / 1 ON (both kept in settings.lowcut, panel.c) */
+static int16_t set_ec, set_su, set_lr;      /* SETTINGS K1: ECHO STEREO, 0 PING-PONG / 1 STEREO; K2: SEM UNISON, 0 OFF / 1 ON; K3: LFO RETRIG, 0 OFF / 1 ON (all kept in settings.lowcut, panel.c) */
 static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } PG[NPG] = {
     {B_HOME, 0, RGB(120, 255, 140), {{"Wave", &trk[0].p[P_E0], NWAVES - 1, 1}, {"Scan", &trk[0].p[P_E1], 127, 4},
                                           {"Fat", &trk[0].p[P_E4], 4, 1}, {"Detune", &trk[0].p[P_DETUNE], 127, 4}}},
@@ -34,20 +37,34 @@ static const struct { uint8_t btn; const char *title; uint16_t bg; kn_t k[4]; } 
                                     {0, &song.g[G_RPROG], 5, 1}, {"Tone", &song.g[G_RTONE], 127, 4}}},
     {B_FX, "ECHO", RGB(255, 96, 40), {{"Time", &song.g[G_ETIME], 127, 4}, {"Repeats", &song.g[G_EFB], 127, 4},
                                       {0, &song.g[G_ECHAR], 4, 1}, {"Amount", &song.g[G_EAMT], 127, 4}}},
-    {B_GLO, "SETTINGS", RGB(170, 120, 255), {{0, &set_ec, 1, 1}, {0, &set_su, 1, 1}}},
+    {B_GLO, "SETTINGS", RGB(170, 120, 255), {{0, &set_ec, 1, 1}, {0, &set_su, 1, 1}, {0, &set_lr, 1, 1}}},
     {B_HOME, "SEM", RGB(120, 255, 140), {{0, &trk[0].p[P_S0], 1, 1}, {"PW 1", &trk[0].p[P_S1], SEM_PW_MAX, 3},
                                          {0, &trk[0].p[P_S2], 1, 1}, {"PW 2", &trk[0].p[P_S3], SEM_PW_MAX, 3}}},
     {B_HOME, "SEM", RGB(120, 255, 140), {{"Tune", &trk[0].p[P_S4], 48, 1}, {"Fine", &trk[0].p[P_S5], 100, 2},
                                          {0, &trk[0].p[P_S6], 1, 1}, {"Mix", &trk[0].p[P_S7], 128, 4}}},
+#define LFOBG RGB(250, 240, 80)     /* pale yellow: the one phosphor not used above */
+    {B_LFO, "LFO", LFOBG, {{0, &trk[0].p[P_L1SH], 4, 1}, {"Rate", &trk[0].p[P_L1RT], 127, 2}, {"Depth", &trk[0].p[P_L1DP], 127, 4},
+                           {0, &trk[0].p[P_L1TW], 3, 1}}},
+    {B_LFO, "LFO", LFOBG, {{0, &trk[0].p[P_L1SH], 4, 1}, {"Rate", &trk[0].p[P_L1RT], 127, 2}, {"Depth", &trk[0].p[P_L1DP], 127, 4},
+                           {0, &trk[0].p[P_L1TS], 4, 1}}},
+    {B_LFO, "LFO", LFOBG, {{0, &trk[0].p[P_L2SH], 4, 1}, {"Rate", &trk[0].p[P_L2RT], 127, 2}, {"Depth", &trk[0].p[P_L2DP], 127, 4},
+                           {0, &trk[0].p[P_L2T], 5, 1}}},
 };
+static const char *const LFO_SH_NAME[5] = {"Sine", "Tri", "Saw", "Square", "Random"};
 static const char *const SEM_W_NAME[2][2] = {{"1 Saw", "1 Pulse"}, {"2 Saw", "2 Pulse"}};
 static const char *const SEM_SYNC_NAME[2] = {"Free", "Sync"};
-static const char *const SET_NAME[2][2] = {{"Ping-pong", "Stereo"}, {"Unison off", "Unison on"}};
+static const char *const SET_NAME[3][2] = {{"Ping-pong", "Stereo"}, {"Unison off", "Unison on"}, {"Retrig off", "Retrig on"}};
 static const char *const FT_NAME[5] = {"LP", "BP", "HP", "NOTCH", "COMB"};
 static const char *const SP_NAME[6] = {"Bedroom", "Castle", "Plate", "Cloud", "Gated", "Wobble"};   /* the bar is 52 px wide */
 static const char *const SP_FULL[6] = {"BEDROOM", "CASTLE", "METAL PLATE", "CLOUD", "GATED", "WOBBLE"};
 static const char *const EC_NAME[5] = {"Clean", "Crunch", "Toy", "Back", "Robot"};   /* BACKWARDS: the bar is 52 px wide */
 static uint8_t ui_page, ui_preset;          /* ui_preset: the one loaded last */
+/* the LFO page's target table (LFO 2's FX, or the engine's) and the one the target knob points at */
+static const ltgt_t *lfo_tgt(void)
+{
+    uint32_t k = (uint32_t)*PG[ui_page].k[3].v;
+    return ui_page == PG_LFO2 ? &LT_FX[k > 5u ? 0u : k] : ui_page == PG_LFO1S ? &LT_SEM[k > 4u ? 0u : k] : &LT_WAVE[k > 3u ? 0u : k];
+}
 static uint32_t ui_banner;                  /* the preset banner shows until this fm1_ms (0: none) */
 static uint8_t ui_bkind;                    /* what it shows: 0 the preset, 1 the engine (ALGORITHM) */
 static int16_t ui_sig[7] = {-1};            /* what the screen shows now; -1: nothing yet (draw_splash resets it) */
@@ -311,6 +328,27 @@ static void pic_settings(void)
     }
 }
 
+/* LFO: one cycle of the shape as a glowing trace (its height is DEPTH, flat at 0) and a dot at the LFO's phase right now, the target's
+ * name in the corner. RANDOM is drawn as eight held steps (the real ones are new every cycle) */
+static void pic_lfo(void)
+{
+    static const int16_t RH[8] = {20000, -26000, 6000, 31000, -12000, -31000, 15000, -6000};
+    const int16_t *p = trk[0].p;
+    int32_t l2 = ui_page == PG_LFO2, i, amp = p[l2 ? P_L2DP : P_L1DP] * 46 / 127, cy = PY + PH / 2 + 6, x, y;
+    uint32_t sh = (uint32_t)p[l2 ? P_L2SH : P_L1SH], ph = l2 ? lfo2g.ph : lfo1g.ph;
+    uint16_t c = PG[ui_page].bg;
+    for (i = 0; i < 200; i++) {
+        pt[i][0] = (int16_t)(PX + 10 + i);
+        pt[i][1] = (int16_t)(cy - ((lfo_wave(sh, (uint32_t)i * 21474836u, RH[i * 8 / 200]) * amp) >> 15));
+    }
+    glow_pts(200, amp ? c : ux_mix(0, c, 35));
+    x = PX + 10 + (int32_t)(ph >> 24) * 200 / 256;
+    y = cy - ((lfo_wave(sh, ph, RH[ph >> 29]) * amp) >> 15);
+    disc(x, y, 9, 2, ux_mix(0, c, 45));
+    disc(x, y, 5, 0, c);
+    cv_text(PX + 6, PY + 4, &AF_S, lfo_tgt()->full, c);
+}
+
 static void banner(void)
 {
     const char *n = ui_bkind ? ENGINES[clamp(trk[0].p[P_ENG], 0, NENG - 1)]->name : PRESETS[ui_preset].name;
@@ -346,14 +384,14 @@ static void scene(void)
     const char *title = ui_page ? PG[ui_page].title : WAVE_NAMES[clamp(trk[0].p[P_E0], 0, NWAVES - 1)];
     if (ui_hit(R_TITLE)) {
         cv_text(12, 4, &AF_L, title, bg);
-        if (PG[ui_page].btn == B_FX || ui_page >= PG_SEM1) {   /* which FX page: 1/2 ECHO, 2/2 SPACE; SEM's 1/2, 2/2 */
-            const char *t = ui_page == PG_ECHO || ui_page == PG_SEM1 ? "1/2" : "2/2";
+        if (PG[ui_page].btn == B_FX || ui_page >= PG_SEM1) {   /* which FX page: 1/2 ECHO, 2/2 SPACE; SEM's 1/2, 2/2; LFO 1 / LFO 2 */
+            const char *t = ui_page == PG_ECHO || ui_page == PG_SEM1 || ui_page == PG_LFO1 || ui_page == PG_LFO1S ? "1/2" : "2/2";
             cv_text(228 - text_w(&AF_M, t), 12, &AF_M, t, bg);
         }
     }
     if (ui_hit(R_PIC)) {
         graticule(PX, PY, PW, PH, bg);
-        (ui_page >= PG_SEM1 ? pic_sem : ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : ui_page == PG_SET ? pic_settings : pic_space)();
+        (ui_page >= PG_LFO1 ? pic_lfo : ui_page >= PG_SEM1 ? pic_sem : ui_page == 0 ? pic_wave : ui_page == 1 ? pic_filter : ui_page == 2 ? pic_env : ui_page == PG_ECHO ? pic_echo : ui_page == PG_SET ? pic_settings : pic_space)();
     }
     bw = (226 - gap * (n - 1)) / n;
     for (i = 0; i < n; i++) {
@@ -361,7 +399,7 @@ static void scene(void)
         if (!ui_hit(bar_rc(i)))
             continue;
         int32_t x = 7 + i * (bw + gap), v = *k->v, fill = k->max < 16 ? (v + 1) * 38 / (k->max + 1) : v * 38 / k->max;
-        const char *name = k->name ? k->name : ui_page == PG_SET ? SET_NAME[i][clamp(*k->v, 0, 1)] : ui_page == PG_SEM1 ? SEM_W_NAME[i >> 1][clamp(*k->v, 0, 1)] : ui_page == PG_SEM2 ? SEM_SYNC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
+        const char *name = k->name ? k->name : ui_page >= PG_LFO1 ? (i ? lfo_tgt()->bar : LFO_SH_NAME[clamp(v, 0, 4)]) : ui_page == PG_SET ? SET_NAME[i][clamp(*k->v, 0, 1)] : ui_page == PG_SEM1 ? SEM_W_NAME[i >> 1][clamp(*k->v, 0, 1)] : ui_page == PG_SEM2 ? SEM_SYNC_NAME[clamp(*k->v, 0, 1)] : ui_page == PG_ECHO ? EC_NAME[clamp(*k->v, 0, 4)] : ui_page == PG_SPACE ? SP_NAME[clamp(*k->v, 0, 5)] : FT_NAME[ty];
         cv_rrect(x, 170, bw, 38, 8, track, 0);
         if (fill > 0)
             cv_rrect(x, 208 - (fill < 8 ? 8 : fill), bw, fill < 8 ? 8 : fill, 8, bg, track);
@@ -415,6 +453,8 @@ static void ui_input(void)
             ui_page = (uint8_t)(i == PG_SPACE ? (ui_page == PG_ECHO ? PG_SPACE : PG_ECHO) : i == 0 && UI_SEM ? (ui_page == PG_SEM1 ? PG_SEM2 : PG_SEM1) : i);   /* FX: ECHO, SPACE, ECHO ...; SEM: 1/2, 2/2 */
     if (pressed & (1u << panel.btn[B_GLO]))
         ui_page = PG_SET;
+    if (pressed & (1u << panel.btn[B_LFO]))      /* LFO: 1/2, 2/2, 1/2 ... */
+        ui_page = (uint8_t)(ui_page == PG_LFO2 ? PG_LFO1 : ui_page >= PG_LFO1 ? PG_LFO2 : PG_LFO1);
     pst = panel_enc(EN_PRESET);
     if (pst) {                                  /* PRESETS: step with wrap-around, show the name for 1.5 s */
         ui_preset = (uint8_t)((ui_preset + pst % (int32_t)NPRESETS + (int32_t)NPRESETS) % (int32_t)NPRESETS);
@@ -430,10 +470,13 @@ static void ui_input(void)
     }
     if (PG[ui_page].btn == B_HOME)              /* HOME is the engine's: WAVE, or SEM's 1/2 and 2/2 */
         ui_page = (uint8_t)(UI_SEM ? (ui_page == PG_SEM2 ? PG_SEM2 : PG_SEM1) : 0);
+    if (ui_page == PG_LFO1 || ui_page == PG_LFO1S)  /* LFO 1 shows the targets of the engine playing */
+        ui_page = (uint8_t)(UI_SEM ? PG_LFO1S : PG_LFO1);
     if (ui_banner && (int32_t)(fm1_ms - ui_banner) >= 0)
         ui_banner = 0;
     set_ec = (int16_t)(set_flags(settings.lowcut) & 1u);
-    set_su = (int16_t)(set_flags(settings.lowcut) >> 1);
+    set_su = (int16_t)(set_flags(settings.lowcut) >> 1 & 1u);
+    set_lr = (int16_t)(set_flags(settings.lowcut) >> 2);
     for (i = 0; i < 4u; i++) {                  /* knobs K1..K4 (a knob the page does not use is only drained) */
         int32_t s = panel_enc(EN_K1 + i), v;
         const kn_t *k = &PG[ui_page].k[i];
@@ -444,23 +487,25 @@ static void ui_input(void)
         v = *k->v + s * k->step;
         *k->v = (int16_t)(v < 0 ? 0 : v > k->max ? k->max : v);
     }
-    if (set_flags(settings.lowcut) != ((uint32_t)set_ec | (uint32_t)set_su << 1)) {   /* SETTINGS K1 or K2 turned: keep it and save */
-        settings.lowcut = set_ec || set_su ? SET_TAG | (uint32_t)set_ec | (uint32_t)set_su << 1 : 0u;
+    if (set_flags(settings.lowcut) != ((uint32_t)set_ec | (uint32_t)set_su << 1 | (uint32_t)set_lr << 2)) {   /* SETTINGS K1..K3 turned: keep it and save */
+        settings.lowcut = set_ec || set_su || set_lr ? SET_TAG | (uint32_t)set_ec | (uint32_t)set_su << 1 | (uint32_t)set_lr << 2 : 0u;
         settings_save();
     }
     ec_stereo = set_ec != 0;
     sem_unison = set_su != 0;
+    lfo_retrig = set_lr != 0;
     if (!fm1_led_anim_on() && ui_led != (int8_t)ui_page) {     /* the page's button glows, the others do not */
         for (i = 0; i < 4u; i++)
             fm1_led_key(panel.btn[PG[i].btn], PG[i].btn == PG[ui_page].btn);
         fm1_led_key(panel.btn[B_GLO], ui_page == PG_SET);
+        fm1_led_key(panel.btn[B_LFO], ui_page >= PG_LFO1);
         ui_led = (int8_t)ui_page;
     }
     for (i = 0; i < NVOICE; i++)
         active |= trk[0].v[i].active;
-    if (active && ui_page == PG_SPACE && fm1_ms - ui_last >= 40u)
-        ui_ring = ui_ring % 48u + 1u;           /* the rings creep outward while notes play (never 0: that is "quiet") */
-    else if (!active)
+    if (((active && ui_page == PG_SPACE) || ui_page >= PG_LFO1) && fm1_ms - ui_last >= 40u)
+        ui_ring = ui_ring % 48u + 1u;           /* the rings creep outward while notes play, the LFO's dot moves (never 0: that is "quiet") */
+    else if (!active && ui_page < PG_LFO1)
         ui_ring = 0;
     sig[0] = (int16_t)ui_page;
     for (i = 0; i < 4u; i++)
@@ -533,6 +578,18 @@ static void perf_cc(uint32_t cc, uint32_t v)
         trk[0].p[P_S0] = trk[0].p[P_S2] = trk[0].p[P_S6] = (int16_t)(v == 2u);
         trk[0].p[P_S4] = (int16_t)(v == 2u ? 31 : 24);
     }
+    else if (cc == 114u)
+        trk[0].p[P_L1DP] = (int16_t)v;               /* LFO 1 DEPTH */
+    else if (cc == 115u)
+        trk[0].p[P_L1TW] = trk[0].p[P_L1TS] = (int16_t)(v % 3u);   /* LFO 1 TARGET (an index both engines have) */
+    else if (cc == 116u)
+        trk[0].p[P_L1RT] = (int16_t)v;
+    else if (cc == 117u)
+        trk[0].p[P_L2DP] = (int16_t)v;               /* LFO 2 DEPTH */
+    else if (cc == 118u)
+        trk[0].p[P_L2T] = (int16_t)(v % 6u);
+    else if (cc == 119u)
+        settings.lowcut = SET_TAG | (set_flags(settings.lowcut) & 3u) | (v ? 4u : 0u);   /* LFO RETRIG, in RAM only (not saved) */
     else
         trk[0].p[P_REV] = (int16_t)v;                /* 112: SPACE amount */
 }
