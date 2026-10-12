@@ -28,6 +28,7 @@ static void preset_load(uint32_t i)
 {
     const preset_t *s = &PRESETS[i % NPRESETS];
     uint32_t k;
+    trk[0].p[P_ENG] = 0;                         /* the presets are WAVE sounds */
     for (k = 0; k < 4u; k++) {
         trk[0].p[P_E0 + k] = s->e[k];
         trk[0].p[P_ATK + k] = s->env[k];

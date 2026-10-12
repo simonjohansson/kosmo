@@ -154,6 +154,7 @@ static void wave_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
 
 static const engine_t ENG_WAVE = {
     .name = "WAVE",
+    .pbase = P_E0,
     .edit = {
         {"WAVE", F_ENUM, 0, NWAVES - 1, 0, WAVE_NAMES, 0},
         {"SCAN", F_PCT, 0, 127, 0, 0, 0},

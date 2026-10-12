@@ -25,7 +25,7 @@ static uint32_t trk_vmode(const track_t *t) { return (uint32_t)t->p[P_VOICE]; }
  * 8-voice budget (only when there is room, else the oldest released voices go), so a full chord on FAT 4 thins out */
 static uint32_t trk_copies(const track_t *t)
 {
-    uint32_t f = (uint32_t)t->p[P_E4];
+    uint32_t f = t->eng ? 0u : (uint32_t)t->p[P_E4];   /* FAT is WAVE's */
     return trk_vmode(t) == V_UNISON ? trk_nvoice(t) : 1u + (f > 4u ? 4u : f);
 }
 
@@ -193,10 +193,10 @@ static void glide_set(track_t *t, voice_t *v, int glide)
 
 static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int glide)
 {
-    const engine_t *e = ENGINE;
+    const engine_t *e = ENGINE_OF(t);
     int sounding = v->active && v->stage != 0;
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
-    int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5], s6 = v->s[6], s7 = v->s[7];
+    int32_t s0 = v->s[0], s1 = v->s[1], s4 = v->s[4], s5 = v->s[5], s6 = v->s[6], s7 = v->s[7], s8 = v->s[8], s9 = v->s[9];
     uint32_t keep = e->keep;
     v->note = (uint8_t)note;
     v->vel = (uint8_t)vel;
@@ -227,6 +227,10 @@ static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int
             v->s[6] = s6;
         if (keep & 0x80u)
             v->s[7] = s7;
+        if (keep & 0x100u)
+            v->s[8] = s8;
+        if (keep & 0x200u)
+            v->s[9] = s9;
     }
 }
 
@@ -505,9 +509,9 @@ __attribute__((noinline)) static void fat_sync(track_t *t)
 static uint8_t tr_side;
 static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
-    const engine_t *e = ENGINE;
+    const engine_t *e = ENGINE_OF(t);
     const int16_t *p = t->p;
-    uint32_t i, nr = 0;
+    uint32_t i, nr = 0, ng = (uint32_t)p[P_ENG] < (uint32_t)NENG ? (uint32_t)p[P_ENG] : 0u;
     /* TUNE in cents: whole 1/16 semitones in the pitch, the rest as a fine factor (no dead zone) */
     int32_t tune = song.g[G_TUNE] >= 0 ? song.g[G_TUNE] * 16 / 100 : -((-song.g[G_TUNE] * 16 + 99) / 100);
     int32_t tune_fine = (song.g[G_TUNE] * 16 - tune * 100) * 2367 / 16000;   /* rest, in 1/4096 (1 ct = 2.367) */
@@ -520,6 +524,14 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     bend = midi_bend_q8[0];
     bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
     bend_fine = (bend - bend16 * 16) * 2367 / 2560;
+    if (ng != t->eng) {                                 /* ALGORITHM turned: the sounding voices fade out (this block's amplitude ramp) */
+        for (i = 0; i < NVOICE; i++) {                  /* with the engine they started on; the next note starts on the new one */
+            t->v[i].gate = 0;
+            t->v[i].stage = t->v[i].active ? 4 : 0;
+        }
+        t->nmono = 0;
+        t->mono_note = 0;
+    }
     if (t->fat_seen != t->p[P_E4])                      /* only a change: voices shed by the budget stay shed */
         fat_sync(t);
     for (i = 0; i < 3u * n; i++)
@@ -531,7 +543,7 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         int32_t env, pitch;
         if (!v->active)
             continue;
-        v->fine = v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
+        v->fine = t->eng ? 0 : v->fk * t->p[P_DETUNE] * 56 / 889;    /* DETUNE reaches held notes */
         env = env_tick(t, v);
         m.envq15 = env;
         m.amp1 = mulq15(env, v->vel * 258);
@@ -559,5 +571,6 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
         PFX(2, e->render(t, v, out + (v->fk ? (v->fk < 0 ? n : 2u * n) : 0u), n, &m));
         nr++;
     }
+    t->eng = (uint8_t)ng;
     return nr;
 }
