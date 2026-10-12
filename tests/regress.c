@@ -556,8 +556,8 @@ static double frame_centroid(void)
     for (h = 0; h < 64u; h++) {
         double re = 0, im = 0, m;
         for (i = 0; i < 256u; i++) {
-            re += wb_tab[i] * cs[h][i];
-            im += wb_tab[i] * sn[h][i];
+            re += wb_tab[0][i] * cs[h][i];
+            im += wb_tab[0][i] * sn[h][i];
         }
         m = sqrt(re * re + im * im);
         num += (h + 1) * m;
@@ -590,7 +590,7 @@ static int chk_scan_ramp(char *msg, uint32_t n)
             prev = c;
         }
         worst = mx > worst ? mx : worst;
-        lim = tb == 4u ? 0.45 : SCAN_JUMP_MAX;
+        lim = tb == 3u ? 0.45 : SCAN_JUMP_MAX;
         if (mx > lim)
             fprintf(stderr, "scan ramp table %u: centroid jump %.3f harmonics per block\n", tb, mx);
         bad += mx > lim;
@@ -602,6 +602,127 @@ static int chk_scan_ramp(char *msg, uint32_t n)
     return !bad;
 }
 
+/* aliasing of the oscillator alone: a table frame played at C5 / C6 / C7 (k = 49 / 97 / 194 cycles in a 4096-sample DFT, so the harmonics
+ * sit on bins that are multiples of k), as the mip level of wave_level against the full table.
+ * Reports the energy at non-harmonic bins relative to the whole signal, in dB; the gain is mip against full. */
+static double alias_db(uint32_t table, int32_t scan, uint32_t k, uint32_t lv)
+{
+    enum { L = 4096 };
+    static double x[L], re[L / 2 + 1], im[L / 2 + 1], cs[L], sn[L], hn[L];
+    const int16_t *a, *b, *tab;
+    int32_t w;
+    uint32_t i, j, ph = 0, inc = k << 20;
+    double tot = 0, al = 0;
+    if (!cs[1])
+        for (i = 0; i < L; i++) {
+            cs[i] = cos(2 * M_PI * i / L);
+            hn[i] = 0.5 - 0.5 * cos(2 * M_PI * i / L);
+            sn[i] = sin(2 * M_PI * i / L);
+        }
+    wave_frames(lv, table, scan << 8, &a, &b, &w);
+    wb_key[lv].a = 0;                                          /* rebuilt for this frame pair */
+    tab = wave_blend(lv, a, b, w);
+    for (i = 0; i < L; i++, ph += inc)
+        x[i] = blend_read(tab, ph) / 32768.0;
+    for (j = 1; j <= L / 2; j++) {                             /* a direct DFT with a Hann window: 2048 bins x 4096 points */
+        double r = 0, m = 0;
+        for (i = 0; i < L; i++) {
+            double c = x[i] * hn[i];
+            r += c * cs[(i * j) % L];
+            m += c * sn[(i * j) % L];
+        }
+        re[j] = r;
+        im[j] = m;
+    }
+    for (j = 1; j <= L / 2; j++) {
+        double e = re[j] * re[j] + im[j] * im[j];
+        uint32_t d = j % k;                                    /* the Hann window spreads a bin into its neighbours */
+        tot += e;
+        al += (d > 2 && d < k - 2) ? e : 0;
+    }
+    return 10 * log10(al / tot + 1e-12);
+}
+
+static int chk_alias(char *msg, uint32_t n)
+{
+    static const uint32_t K[3] = {49, 97, 194};
+    static const char *const NM[3] = {"C5", "C6", "C7"};
+    uint32_t tb, c, sc, len = 0, bad = 0;
+    msg[0] = 0;
+    for (tb = 0; tb < NWAVES; tb++) {
+        if (tb != 4u && tb != 6u)                              /* ALIEN, GHOST: the dense frames */
+            continue;
+        for (c = 0; c < 3u; c++) {
+            double gain = 1e9, worst = -1e9;
+            uint32_t lv = wave_level(K[c] << 20);
+            if (!lv)                                           /* C5 plays the full table: nothing to compare */
+                continue;
+            for (sc = 20; sc <= 120; sc += 20) {
+                double g0 = alias_db(tb, (int32_t)sc, K[c], 0), g1 = alias_db(tb, (int32_t)sc, K[c], lv);
+                if (g0 > -30) {                                /* aliasing that was audible: at least 20 dB less */
+                    gain = g0 - g1 < gain ? g0 - g1 : gain;
+                }
+                worst = g1 > worst ? g1 : worst;
+                bad += g0 > -30 && g0 - g1 < 20 && g1 > -40;
+                bad += g1 > -30;                               /* and nothing audible where the full table was clean */
+            }
+            len += (uint32_t)snprintf(msg + len, n - len, "%s %s level %u: %.0f dB less where it was above -30, worst %.0f; ",
+                                      WAVE_NAMES[tb], NM[c], lv, gain > 1e8 ? 0 : gain, worst);
+        }
+    }
+    snprintf(msg + len, n - len, "(aliasing = energy at non-harmonic bins; limits: 20 dB less or under -40 dB where it was above -30, else under -30), %u cases over", bad);
+    return !bad;
+}
+
+/* the switch to mip level 1 (inc 2^26 - 1 -> 2^26, the same pitch) on ALIEN and GHOST, WAVE rendered directly: after 3 blocks on
+ * level 0, one block that switches against the same block that does not (a copy of the voice), at 40 start phases and 3 SCANs.
+ * The difference of the two ramps in from 0 (the cross-fade starts on the old table); a hard switch would put the whole
+ * difference of the two tables in the first samples. Reported: the largest first-4-samples difference over the largest. */
+static int chk_mip_switch(char *msg, uint32_t n)
+{
+    static const int32_t SC[3] = {30, 60, 90};
+    static const uint32_t TB[2] = {4, 6};
+    double worst = 0;
+    uint32_t q, r, k, i;
+    track_t *t = &trk[0];
+    host_tracks_init();
+    t->p[P_FTYPE] = 0;
+    t->p[P_E2] = 127;
+    t->p[P_E3] = 0;
+    for (q = 0; q < 6u; q++)
+        for (r = 0; r < 40u; r++) {
+            voice_t *v = &t->v[0], v2;
+            vmod_t m = {0};
+            int32_t o1[32] = {0}, o2[32] = {0}, early = 0, all = 0;
+            t->p[P_E0] = (int16_t)TB[q & 1u];
+            t->p[P_E1] = (int16_t)SC[q / 2u];
+            memset(v, 0, sizeof *v);
+            v->s[2] = 127 << 8;
+            v->s[6] = SC[q / 2u] << 16;
+            v->ph[0] = r * 107374182u;
+            m.amp0 = m.amp1 = 16384;
+            for (k = 0; k < 3u; k++) {
+                int32_t o[32] = {0};
+                m.inc = (1u << 26) - 1u;
+                wave_render(t, v, o, 32, &m);
+            }
+            v2 = *v;
+            m.inc = (1u << 26) - 1u;
+            wave_render(t, &v2, o1, 32, &m);
+            m.inc = 1u << 26;
+            wave_render(t, v, o2, 32, &m);
+            for (i = 0; i < 32u; i++) {
+                int32_t d = labs(o2[i] - o1[i]);
+                all = d > all ? d : all;
+                early = i < 4u && d > early ? d : early;
+            }
+            if (all > 300)
+                worst = (double)early / all > worst ? (double)early / all : worst;
+        }
+    snprintf(msg, n, "level 0 -> 1 on ALIEN and GHOST, 240 switches: the first 4 samples carry at most %.2f of the block's difference (limit 0.5)", worst);
+    return worst <= 0.5;
+}
+
 /* one detent (SCAN 40 -> 44) on a held note: the voice's SCAN moves monotonically, takes 40 ms or more to cover 90 % of
  * the step, and has arrived inside 400 ms */
 static int chk_scan_glide(char *msg, uint32_t n)
@@ -610,7 +731,7 @@ static int chk_scan_glide(char *msg, uint32_t n)
     int32_t prev, lo = 40 << 16, hi = 44 << 16;
     track_t *t = &trk[0];
     host_tracks_init();
-    t->p[P_E0] = 5;
+    t->p[P_E0] = 4;
     t->p[P_E1] = 40;
     t->p[P_SUS] = 127;
     t->p[P_REV] = 0;
@@ -643,7 +764,7 @@ static int chk_scan_env(char *msg, uint32_t n)
     int32_t w0 = 0, e0 = -1;
     track_t *t = &trk[0];
     host_tracks_init();
-    t->p[P_E0] = 5;
+    t->p[P_E0] = 4;
     t->p[P_E1] = 60;
     t->p[P_ATK] = 0;
     t->p[P_DEC] = 60;
@@ -657,11 +778,11 @@ static int chk_scan_env(char *msg, uint32_t n)
         for (v = 0; v < NVOICE && !t->v[v].active; v++)
             ;
         if (k == 0) {
-            a0 = wb_a; b0 = wb_b; w0 = wb_w;
+            a0 = wb_key[0].a; b0 = wb_key[0].b; w0 = wb_key[0].w;
         }
         moved |= v < NVOICE && e0 >= 0 && t->v[v].env != e0;
         e0 = v < NVOICE ? t->v[v].env : e0;
-        bad += wb_a != a0 || wb_b != b0 || wb_w != w0;
+        bad += wb_key[0].a != a0 || wb_key[0].b != b0 || wb_key[0].w != w0;
     }
     snprintf(msg, n, "SCAN with a fast ENV (SHP 40): envelope moved %s, %u of 100 blocks changed frame", moved ? "yes" : "NO", bad);
     return moved && !bad;
@@ -1816,6 +1937,8 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: SCAN ramp, smooth brightness")->check = chk_scan_ramp;
     add(J_CHECK, "wave: SCAN glide of one detent")->check = chk_scan_glide;
     add(J_CHECK, "wave: SCAN ignores the envelope")->check = chk_scan_env;
+    add(J_CHECK, "wave: band-limited tables, aliasing at C5 C6 C7")->check = chk_alias;
+    add(J_CHECK, "wave: no click at a mip level switch")->check = chk_mip_switch;
     add(J_CHECK, "filter: every TYPE stable at max RES")->check = chk_filters;
     add(J_CHECK, "filter: drawn curve = real response")->check = chk_curves;
     add(J_CHECK, "space: BEDROOM tail decays")->check = chk_space_decay0;

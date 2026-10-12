@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Wavetables for Kosmo's WAVE engine: 12 tables x 64 frames x 256 int16 samples. Each table is a designed morph
+"""Wavetables for Kosmo's WAVE engine: 8 tables x 64 frames x 256 int16 samples. Each table is a designed morph
 (vowels, hard sync, wavefolding, FM, drawbars ...), not a crossfade of two shapes. Every frame is DC-free and
 peak-normalised to 32000; the script fails if a frame is not, or if two neighbouring frames differ too much (a
 click when SCAN moves). Writes a C header and the table names.
@@ -56,12 +56,6 @@ def monster(t):                                               # wavefolder, gain
     return [tri(0.25 * g * (math.sin(TAU * i / N) + 0.45 * math.sin(TAU * 2 * i / N + 1.0)) + 0.0) for i in range(N)]
 
 
-def zap(t):                                                   # CZ resonance: a saw-windowed sine, 1 -> 18 cycles
-    k = 1 + 17 * t ** 1.5
-    return [(1 - i / N) ** 1.3 * math.sin(TAU * k * i / N) + 0.3 * (1 - i / N) ** 3 * math.sin(TAU * k * 1.5 * i / N)
-            for i in range(N)]
-
-
 def chiptune(t):
     f = round(t * 63)
     if f < 24:                                                # the pulse width shrinks 8/16 -> 1/16 a frame at a time (edge sample partial)
@@ -89,29 +83,9 @@ def alien(t):                                                 # FM: four breaths
     return [math.sin(TAU * i / N + idx * math.sin(TAU * m * i / N)) for i in range(N)]
 
 
-def bubbles(t):                                               # harmonics grow in one by one, then odd only, then bells
-    f = round(t * 63)
-    if f < 30:
-        n = 1 + 27 * f / 29
-        return add({h: (clip01(n - h + 1) / h ** .8, 0) for h in range(1, 29)})
-    if f < 46:
-        u = smooth((f - 30) / 15)
-        return add({h: ((1 if h % 2 else 1 - u) / h ** .8, 0) for h in range(1, 29)})
-    u = smooth((f - 46) / 17)
-    bell = {1: 1, 3: .7, 4: .6, 6: .5, 9: .45, 10: .4, 14: .35, 17: .3}
-    return add({h: (lerp((1 / h ** .8) if h % 2 else 0, bell.get(h, 0), u), 0) for h in range(1, 29)})
-
-
 def crystal(t):                                               # sparse high partials that light up one after another
     P = (4, 7, 9, 12, 15, 18, 22, 26, 31)
     return add({h: (G(t, k / 8, .11) / h ** .2 + (.15 if h == 4 else 0), (k * .21) % 1) for k, h in enumerate(P)})
-
-
-def dragon(t):                                                # more and more saws, driven harder, pulled off-centre
-    g = 1.0 * 5 ** t
-    saws = (frac(i / N + .5) * 2 - 1 for i in range(N))
-    return [math.tanh(g * (x + sum(clip01(t * 6 - j + 1) * (frac((j + 1) * i / N + .13 * j) * 2 - 1) for j in range(1, 6))
-                           + 0.8 * smooth(t))) for i, x in enumerate(saws)]
 
 
 def ghost(t):                                                 # narrow band of random-phase partials: breathy -> whistly
@@ -129,20 +103,8 @@ def space_organ(t):                                           # drawbars on 1 2 
     return add({h: (lerp(int(R[k][j]), int(R[k + 1][j]), u) / 8, 0.05 * j) for j, h in enumerate(D)})
 
 
-def wild(t):                                                  # a new random spectrum every four frames
-    f = round(t * 63)
-    def key(n):
-        rnd = random.Random(1000 + n)
-        return {rnd.randint(1, 30): rnd.uniform(.3, 1) for _ in range(rnd.randint(2, 6))}
-    k, u = divmod(f, 4)
-    a, b = key(k), key(k + 1)
-    ph = random.Random(5)
-    return add({h: (lerp(a.get(h, 0), b.get(h, 0), u / 4), ph.random()) for h in range(1, 31)})
-
-
-TABLES = [("ROBOT TALK", robot_talk), ("LASER", laser), ("MONSTER", monster), ("ZAP", zap), ("CHIPTUNE", chiptune),
-          ("ALIEN", alien), ("BUBBLES", bubbles), ("CRYSTAL", crystal), ("DRAGON", dragon), ("GHOST", ghost),
-          ("SPACE ORGAN", space_organ), ("WILD", wild)]
+TABLES = [("ROBOT TALK", robot_talk), ("LASER", laser), ("MONSTER", monster), ("CHIPTUNE", chiptune),
+          ("ALIEN", alien), ("CRYSTAL", crystal), ("GHOST", ghost), ("SPACE ORGAN", space_organ)]
 WARPED = {"LASER", "MONSTER", "SPACE ORGAN"}                  # smooth in t, so the frames can be re-spaced; the others step on f by design
 
 
@@ -217,11 +179,32 @@ def jump(a, b):                                               # rms of the diffe
 JUMP_MAX = 1.2                                                # two unrelated frames differ by about 1.4
 
 
+BITS = (8, 6, 5, 4)                                     # log2 points per frame of each mip level: 256, 64, 32, 16; a level holds 1/4 of its points as harmonics
+
+
+def taper(h, top):                                            # 1 up to half the top harmonic, then a cos^2 fade to 0 above it
+    return 1.0 if 4 * h <= top else math.cos(math.pi / 2 * (h - top / 4) / (3 * top / 4 + 1)) ** 2
+
+
+def mip(fr, bits):                                            # a frame low-passed to P/4 harmonics, resampled to P = 2^bits points (linear
+    P, K = 1 << bits, (1 << bits) // 4 + 1                    # reading images the harmonics above P/4 into the band, so half of P is headroom)
+    out = []
+    for s in fr:
+        c = [(sum(s[i] * math.cos(TAU * h * i / N) for i in range(N)) * 2 / N,
+              sum(s[i] * math.sin(TAU * h * i / N) for i in range(N)) * 2 / N) for h in range(1, K)]
+        out.append([max(-32767, min(32767, round(sum(taper(h, K - 1) * (a * math.cos(TAU * h * i / P) + b * math.sin(TAU * h * i / P))
+                                                     for h, (a, b) in enumerate(c, 1))))) for i in range(P)])
+    return out
+
+
 def main(path):
     out = ["/* generated by tools/gen_waves.py */", "#pragma once", "#include <stdint.h>", f"#define NWAVES {len(TABLES)}",
-           f"#define WAVE_FRAMES {FRAMES}", f"static const int16_t WAVES[NWAVES][WAVE_FRAMES][{N}] = {{"]
+           f"#define WAVE_FRAMES {FRAMES}", f"#define WAVE_NLVL {len(BITS)}", f"static const int16_t WAVES[NWAVES][WAVE_FRAMES][{N}] = {{"]
+    mips = [[] for _ in BITS]
     for name, fn in TABLES:
         fr = frames(fn, name in WARPED)
+        for m in range(1, len(BITS)):
+            mips[m].append(mip(fr, BITS[m]))
         for f, s in enumerate(fr):
             assert max(map(abs, s)) <= PEAK and abs(sum(s)) <= N, f"{name} frame {f}: too loud / not DC-free"
             if f:
@@ -230,6 +213,13 @@ def main(path):
         out += ["  {" + ",".join(map(str, s)) + "}," for s in fr]
         out.append(" },")
     out.append("};")
+    for m in range(1, len(BITS)):                             # level m: 2^BITS points a frame
+        out.append(f"static const int16_t WAVEM{m}[NWAVES][WAVE_FRAMES][{1 << BITS[m]}] = {{")
+        out += [" {" + ",".join("{" + ",".join(map(str, s)) + "}" for s in t) + "}," for t in mips[m]]
+        out.append("};")
+    out.append("static const int16_t *const WAVE_LVL[WAVE_NLVL] = {&WAVES[0][0][0], " +
+               ", ".join(f"&WAVEM{m}[0][0][0]" for m in range(1, len(BITS))) + "};")
+    out.append("static const uint8_t WAVE_BITS[WAVE_NLVL] = {" + ",".join(map(str, BITS)) + "};")
     with open(path, "w") as fh:
         fh.write("\n".join(out) + "\n")
 

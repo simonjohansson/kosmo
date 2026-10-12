@@ -1,16 +1,16 @@
 # KOSMO host CPU baseline (tests/regress.c): instructions per 44.1 kHz sample, cc -O2 on
 # the Mac (kernel-counted, ~1 % run to run). The check allows +25 %. Rewritten by BUDGET_UPDATE=1.
-cpu/00_ROBOT_LEAD 968
-cpu/01_CHOIR_PAD 968
-cpu/02_BELLS 967
-cpu/03_BUZZ_BASS 968
-cpu/04_ORGAN 967
-cpu/05_ZAP 968
-cpu/filter/BP 1009
-cpu/filter/HP 986
-cpu/filter/NOTCH 993
-cpu/filter/COMB 766
-cpu/fat4 957
-cpu/echo/CLEAN 1148
-cpu/echo/BACKWARDS 1194
-cpu/mix/idle 338
+cpu/00_ROBOT_LEAD 1095
+cpu/01_CHOIR_PAD 1095
+cpu/02_BELLS 1093
+cpu/03_BUZZ_BASS 1095
+cpu/04_ORGAN 1094
+cpu/05_ZAP 1095
+cpu/filter/BP 1119
+cpu/filter/HP 1104
+cpu/filter/NOTCH 1111
+cpu/filter/COMB 876
+cpu/fat4 1100
+cpu/echo/CLEAN 1346
+cpu/echo/BACKWARDS 1331
+cpu/mix/idle 397
