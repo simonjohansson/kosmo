@@ -19,7 +19,12 @@ static uint32_t trk_nvoice(const track_t *t)
     return NVOICE;
 }
 
-static uint32_t trk_vmode(const track_t *t) { return (uint32_t)t->p[P_VOICE]; }
+static uint8_t sem_unison;                      /* SEM UNISON (SETTINGS, ui.c syncs it): off, SEM treats UNISON as POLY */
+static uint32_t trk_vmode(const track_t *t)
+{
+    uint32_t m = (uint32_t)t->p[P_VOICE];
+    return m == V_UNISON && t->eng && !sem_unison ? (uint32_t)V_POLY : m;
+}
 
 /* voices per note: UNISON uses all, else 1 + FAT (P_E4, 0..4). shortcut: the copies come out of the shared
  * 8-voice budget (only when there is room, else the oldest released voices go), so a full chord on FAT 4 thins out */

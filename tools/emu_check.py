@@ -63,10 +63,12 @@ def script():
     steps.append(("08_note", t + 600 * MS))
     ev.append((t + 700 * MS, NOTE, 0))
     t += 1500 * MS
-    press("f6")                                             # GLO: the SETTINGS page (ECHO PING-PONG), then K1 to STEREO
+    press("f6")                                             # GLO: the SETTINGS page (ECHO PING-PONG), then K1 to STEREO, K2 to SEM UNISON ON
     snap("09_settings_page")
     turn(KNOB[0], 1)
     snap("09_settings_knobs")
+    turn(KNOB[1], 1)                                        # K2: SEM UNISON ON
+    snap("09_settings_unison")
     turn(ALGO, 1)                                           # ALGORITHM: the engine banner (SEM), then HOME is SEM's 1/2 and 2/2
     snap("10_sem_banner")
     t += 1200 * MS

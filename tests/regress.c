@@ -1953,6 +1953,30 @@ static int chk_mode_budget(char *msg, uint32_t n)
     return !bad;
 }
 
+/* SEM UNISON: OFF (the default) SEM plays a V_UNISON note on one voice, ON on all of them; WAVE stacks either way */
+static int chk_sem_unison(char *msg, uint32_t n)
+{
+    uint32_t e, on, got[2][2];
+    for (e = 0; e < 2u; e++)
+        for (on = 0; on < 2u; on++) {
+            track_t *t = &trk[0];
+            memset(trk, 0, sizeof trk);
+            memset(&song, 0, sizeof song);
+            host_tracks_init();
+            host_sound(t, 0);
+            t->p[P_ENG] = (int16_t)e;
+            t->eng = (uint8_t)e;
+            t->p[P_VOICE] = V_UNISON;
+            sem_unison = (uint8_t)on;
+            trk_note_on(t, 60, 100);
+            got[e][on] = voices_busy();
+            trk_all_off(t);
+        }
+    sem_unison = 0;
+    snprintf(msg, n, "V_UNISON note: WAVE %u / %u voices (OFF / ON), SEM %u / %u", got[0][0], got[0][1], got[1][0], got[1][1]);
+    return got[0][0] == NVOICE && got[0][1] == NVOICE && got[1][0] == 1u && got[1][1] == NVOICE && !sem_unison;
+}
+
 static void mode_release_reset(uint32_t mode)
 {
     memset(trk, 0, sizeof trk);
@@ -2248,6 +2272,7 @@ int main(int argc, char **argv)
     add(J_CHECK, "wave: no click at a mip level switch")->check = chk_mip_switch;
     add(J_CHECK, "sem: VCO1, VCO2 pitch, TUNE and FINE")->check = chk_sem_pitch;
     add(J_CHECK, "sem: PW sets the duty")->check = chk_sem_pw;
+    add(J_CHECK, "sem: UNISON only with SEM UNISON on")->check = chk_sem_unison;
     add(J_CHECK, "sem: PW detent without a step")->check = chk_sem_pw_step;
     add(J_CHECK, "sem: band-limited, aliasing at C5 C6 C7")->check = chk_sem_alias;
     add(J_CHECK, "sem: SYNC locks VCO2 to VCO1")->check = chk_sem_sync;

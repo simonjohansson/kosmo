@@ -117,6 +117,16 @@ int main(void)
         bad += check("ECHO STEREO survives a save and a power-on load", st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p &&
                       p.lowcut == ECHO_STEREO_TAG && settings.lowcut == ECHO_STEREO_TAG);
     }
+    {   /* SEM UNISON (SETTINGS page): OFF at power-on, ON saved with ECHO STEREO in the same lowcut field, back after power-on */
+        bad += check("SEM UNISON is OFF in a fresh record", (set_flags(0) >> 1) == 0 && (set_flags(ECHO_STEREO_TAG) >> 1) == 0);
+        settings.lowcut = ECHO_STEREO_TAG | SEM_UNISON_TAG;
+        settings_save();
+        persist_saved.lowcut = 0;
+        memset(&settings, 0, sizeof settings);
+        persist_boot();
+        bad += check("SEM UNISON ON (with ECHO STEREO) survives a save and a power-on load", st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p &&
+                      set_flags(p.lowcut) == 3u && set_flags(settings.lowcut) == 3u);
+    }
     {   /* no flash part: RAM only, nothing written */
         reset();
         flash_ok = 0;
